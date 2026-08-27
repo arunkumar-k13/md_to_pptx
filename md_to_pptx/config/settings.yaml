@@ -1,0 +1,38 @@
+# Externalized Configuration for Markdown to PowerPoint Generator
+
+overflow:
+  max_bullets_per_slide: 8
+  max_paragraph_words_per_slide: 150
+  min_font_size_pt: 14
+  font_scaling_enabled: true
+  enable_automatic_continuation: true
+
+presentation:
+  continuation_suffix: "(Continued)"
+  default_thank_you_title: "Thank You"
+  auto_detect_section_dividers: true
+
+images:
+  keep_aspect_ratio: true
+  max_width_percentage: 0.90
+  max_height_percentage: 0.85
+
+export:
+  preferred_pdf_exporter: "libreoffice"
+  libreoffice_binary_path: "soffice"
+
+template_defaults:
+  fallback_title_layout_name: "Title Slide"
+  fallback_content_layout_name: "Title and Content"
+  header_top_margin_inches: 1.0
+  footer_bottom_margin_inches: 0.6
+  content_padding_inches: 0.2
+
+brand_slides:
+  enabled: true
+  cover: true
+  disclaimer: true
+  about_company: true
+  case_study: true
+  thank_you: true
+

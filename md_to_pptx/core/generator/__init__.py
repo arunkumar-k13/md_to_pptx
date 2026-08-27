@@ -1,0 +1,1 @@
+"""PowerPoint Presentation Generator package."""
