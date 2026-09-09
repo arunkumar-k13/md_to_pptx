@@ -12,7 +12,7 @@ from typing import List, Optional
 from md_to_pptx.config.settings_loader import Settings
 from md_to_pptx.core.overflow.overflow_analyzer import OverflowAnalyzer
 from md_to_pptx.core.overflow.overflow_strategy import OverflowStrategy
-from md_to_pptx.core.presentation_model import Presentation, Slide, TitleBlock
+from md_to_pptx.core.presentation_model import Presentation, Slide, TitleBlock, ParagraphBlock
 
 logger = logging.getLogger(__name__)
 
@@ -136,13 +136,27 @@ class Paginator:
             continuation_count += 1
 
             # Prepare next continuation slide
-            base_title_text = (
-                slide.title.text if slide.title else "Content"
-            )
-            continuation_title = TitleBlock(
-                text=f"{base_title_text} {continuation_suffix}",
-                level=slide.title.level if slide.title else 2,
-            )
+            first_moved = moved_blocks[0] if moved_blocks else None
+            new_section_title = None
+            if isinstance(first_moved, ParagraphBlock):
+                txt = first_moved.text.strip()
+                import re
+                if re.match(r"^\s*(\*\*|\#\#\s*)?(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z]", txt):
+                    new_section_title = txt
+
+            if new_section_title:
+                continuation_title = TitleBlock(
+                    text=new_section_title,
+                    level=slide.title.level if slide.title else 2,
+                )
+            else:
+                base_title_text = (
+                    slide.title.text if slide.title else "Content"
+                )
+                continuation_title = TitleBlock(
+                    text=f"{base_title_text} {continuation_suffix}",
+                    level=slide.title.level if slide.title else 2,
+                )
 
             current_slide = Slide(
                 intent=slide.intent,

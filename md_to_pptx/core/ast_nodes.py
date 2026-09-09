@@ -26,6 +26,7 @@ class InlineRun:
     is_bold: bool = False
     is_italic: bool = False
     is_code: bool = False
+    is_strikethrough: bool = False
     url: Optional[str] = None
 
 
@@ -79,6 +80,7 @@ class ListItem(ASTNode):
     runs: List[InlineRun] = field(default_factory=list)
     children: List[ASTNode] = field(default_factory=list)
     level: int = 0
+    is_ordered: bool = False
 
 
 @dataclass(slots=True)
@@ -92,6 +94,7 @@ class BulletListNode(ASTNode):
 
     items: List[ListItem] = field(default_factory=list)
     is_ordered: bool = False
+    start_index: int = 1
 
 
 @dataclass(slots=True)
@@ -101,10 +104,12 @@ class TableCell:
     Attributes:
         text: Plain text content.
         is_header: True if cell is part of header row.
+        runs: Formatted inline runs.
     """
 
     text: str
     is_header: bool = False
+    runs: List[InlineRun] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -174,6 +179,7 @@ class QuoteNode(ASTNode):
 
     children: List[ASTNode] = field(default_factory=list)
     text: str = ""
+    runs: List[InlineRun] = field(default_factory=list)
 
 
 @dataclass(slots=True)

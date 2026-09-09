@@ -39,11 +39,11 @@ class OverflowAnalysisResult:
 class OverflowAnalyzer:
     """Analyzer evaluating slides against spatial and item count overflow constraints."""
 
-    def __init__(self, max_body_height_inches: float = 4.2, body_width_inches: float = 8.0) -> None:
+    def __init__(self, max_body_height_inches: float = 3.8, body_width_inches: float = 8.0) -> None:
         """Initialize OverflowAnalyzer with body placeholder dimensions.
 
         Args:
-            max_body_height_inches: Target body placeholder height in inches (default 4.2).
+            max_body_height_inches: Target body placeholder height in inches (default 3.8).
             body_width_inches: Target body placeholder width in inches (default 8.0).
         """
         self.max_body_height_inches = max_body_height_inches
@@ -56,22 +56,11 @@ class OverflowAnalyzer:
         template_meta: Optional[Any] = None,
         resolver: Optional[Any] = None,
     ) -> OverflowAnalysisResult:
-        """Analyze a Slide instance for height or item count overflow.
-
-        Args:
-            slide: Slide instance to evaluate.
-            settings: Settings configuration instance.
-            template_meta: Optional TemplateMetadata instance for template-aware bounds.
-            resolver: Optional SlideLayoutResolver instance for layout resolution.
-
-        Returns:
-            OverflowAnalysisResult instance.
-        """
         cfg = settings or Settings()
-        max_bullets = cfg.overflow.max_bullets_per_slide
+        max_bullets = min(cfg.overflow.max_bullets_per_slide, 10)
         max_words = cfg.overflow.max_paragraph_words_per_slide
 
-        target_max_height = self.max_body_height_inches
+        target_max_height = min(self.max_body_height_inches, 6.2)
         target_width = self.body_width_inches
 
         if template_meta and resolver:
@@ -87,7 +76,7 @@ class OverflowAnalyzer:
                     footer_bottom_margin=f_margin,
                     padding=pad,
                 )
-                target_max_height = bounds.height_inches
+                target_max_height = min(bounds.height_inches, 6.2)
                 target_width = bounds.width_inches
             except Exception as err:
                 logger.warning("Failed to resolve layout bounds for slide overflow evaluation: %s", err)

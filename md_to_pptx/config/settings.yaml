@@ -1,8 +1,8 @@
 # Externalized Configuration for Markdown to PowerPoint Generator
 
 overflow:
-  max_bullets_per_slide: 8
-  max_paragraph_words_per_slide: 150
+  max_bullets_per_slide: 12
+  max_paragraph_words_per_slide: 200
   min_font_size_pt: 14
   font_scaling_enabled: true
   enable_automatic_continuation: true

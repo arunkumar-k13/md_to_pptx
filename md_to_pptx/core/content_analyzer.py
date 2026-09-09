@@ -151,7 +151,7 @@ class ContentAnalyzer:
             elif analyzed.block_type == ContentBlockType.CODE_BLOCK:
                 has_code_blocks = True
 
-        sections = self._analyze_sections(document.sections)
+        sections = self._analyze_sections(document.sections, doc_title=document.title or "")
 
         return AnalyzedDocument(
             title=document.title,
@@ -251,15 +251,27 @@ class ContentAnalyzer:
                 block_type=ContentBlockType.UNKNOWN, ast_node=node, candidate_hints={SlideCandidateHint.POTENTIAL_CONTENT_SLIDE}
             )
 
-    def _analyze_sections(self, sections: List[Section]) -> List[AnalyzedSection]:
+    def _is_major_section_header_text(self, text: str) -> bool:
+        t = text.strip()
+        import re
+        pattern = r"^\s*(\*\*|\#\#\s*)?(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z]"
+        return bool(re.match(pattern, t))
+
+    def _analyze_sections(self, sections: List[Section], doc_title: str = "") -> List[AnalyzedSection]:
         """Convert AST Section structures into AnalyzedSection objects.
 
         Args:
             sections: List of AST Section instances.
+            doc_title: Main document title string.
 
         Returns:
             List of AnalyzedSection objects.
         """
+        # Merge preamble section without header preceding initial slide section
+        if len(sections) > 1 and sections[0].header is None:
+            sections[1].nodes = sections[0].nodes + sections[1].nodes
+            sections = sections[1:]
+
         analyzed_sections: List[AnalyzedSection] = []
 
         for sec in sections:
@@ -267,14 +279,70 @@ class ContentAnalyzer:
             level = sec.header.level if sec.header else 2
             is_major = (level == 1)
 
-            sec_blocks = [self._analyze_node(n) for n in sec.nodes if n != sec.header]
-            analyzed_sections.append(
-                AnalyzedSection(
-                    title=title,
-                    level=level,
-                    blocks=sec_blocks,
-                    is_major_divider_candidate=is_major,
+            doc_title_clean = doc_title.strip()
+            sec_blocks = [
+                self._analyze_node(n) for n in sec.nodes
+                if n != sec.header and (not hasattr(n, "text") or getattr(n, "text", "").strip() != doc_title_clean)
+            ]
+
+            current_title = title
+            current_blocks: List[AnalyzedBlock] = []
+
+            for b in sec_blocks:
+                b_text = getattr(b.ast_node, "text", "").strip() if hasattr(b.ast_node, "text") else ""
+
+                if b.block_type == ContentBlockType.PARAGRAPH_GROUP and self._is_major_section_header_text(b_text):
+                    if current_blocks:
+                        analyzed_sections.append(
+                            AnalyzedSection(
+                                title=current_title,
+                                level=level,
+                                blocks=current_blocks,
+                                is_major_divider_candidate=is_major,
+                            )
+                        )
+                        current_blocks = []
+                    current_title = b_text
+                    current_blocks.append(b)
+
+                elif b.block_type == ContentBlockType.BULLET_LIST and isinstance(b.ast_node, BulletListNode):
+                    # Check if list contains any major Roman Numeral headers inside list items
+                    sub_items: List[ListItem] = []
+                    for item in b.ast_node.items:
+                        if self._is_major_section_header_text(item.text):
+                            if current_blocks or sub_items:
+                                if sub_items:
+                                    sub_node = BulletListNode(items=sub_items, is_ordered=b.ast_node.is_ordered)
+                                    current_blocks.append(self._analyze_node(sub_node))
+                                analyzed_sections.append(
+                                    AnalyzedSection(
+                                        title=current_title,
+                                        level=level,
+                                        blocks=current_blocks,
+                                        is_major_divider_candidate=is_major,
+                                    )
+                                )
+                                current_blocks = []
+                                sub_items = []
+                            current_title = item.text
+                        else:
+                            sub_items.append(item)
+
+                    if sub_items:
+                        sub_node = BulletListNode(items=sub_items, is_ordered=b.ast_node.is_ordered)
+                        current_blocks.append(self._analyze_node(sub_node))
+
+                else:
+                    current_blocks.append(b)
+
+            if current_blocks or (sec.header and sec.header.text):
+                analyzed_sections.append(
+                    AnalyzedSection(
+                        title=current_title,
+                        level=level,
+                        blocks=current_blocks,
+                        is_major_divider_candidate=is_major,
+                    )
                 )
-            )
 
         return analyzed_sections

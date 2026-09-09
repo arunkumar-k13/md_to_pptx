@@ -113,6 +113,7 @@ class BulletListBlock(ContentBlock):
 
     items: List[ListItem] = field(default_factory=list)
     is_ordered: bool = False
+    start_index: int = 1
 
     def estimate_height(self, available_width_inches: float = 8.0) -> float:
         font_size_pt = 20.0
@@ -175,6 +176,7 @@ class TableBlock(ContentBlock):
 
     headers: List[str] = field(default_factory=list)
     rows: List[List[str]] = field(default_factory=list)
+    raw_rows: List[Any] = field(default_factory=list)
 
     def estimate_height(self, available_width_inches: float = 8.0) -> float:
         all_rows = []
@@ -228,6 +230,7 @@ class QuoteBlock(ContentBlock):
 
     text: str = ""
     author: str = ""
+    runs: List[InlineRun] = field(default_factory=list)
 
     def estimate_height(self, available_width_inches: float = 8.0) -> float:
         chars_per_line = max(1, int(available_width_inches * 15))

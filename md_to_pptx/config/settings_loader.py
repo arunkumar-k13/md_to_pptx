@@ -27,8 +27,8 @@ class OverflowSettings:
         enable_automatic_continuation: Automatically split overflow onto continuation slides.
     """
 
-    max_bullets_per_slide: int = 8
-    max_paragraph_words_per_slide: int = 150
+    max_bullets_per_slide: int = 10
+    max_paragraph_words_per_slide: int = 200
     min_font_size_pt: int = 14
     font_scaling_enabled: bool = True
     enable_automatic_continuation: bool = True

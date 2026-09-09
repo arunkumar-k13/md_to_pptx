@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Optional, Union
 
 from pptx import Presentation as PPTXPresentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.opc.packuri import PackURI
 from pptx.util import Inches, Pt
 
@@ -150,6 +152,24 @@ class PPTXGenerator:
         self.tmpl_meta = template_meta
 
         prs = PPTXPresentation(str(path))
+
+        # Sanitize master layouts and slide master to replace leftover "Standard Business Presentation"
+        for layout in prs.slide_layouts:
+            for shp in layout.shapes:
+                if shp.has_text_frame and shp.text_frame:
+                    if shp.text_frame.text and "Standard Business Presentation" in shp.text_frame.text:
+                        shp.text_frame.text = CORPORATE_FOOTER_TEXT
+                        for p in shp.text_frame.paragraphs:
+                            p.font.name = "Arial"
+                            p.font.size = Pt(9)
+        for shp in prs.slide_master.shapes:
+            if shp.has_text_frame and shp.text_frame:
+                if shp.text_frame.text and "Standard Business Presentation" in shp.text_frame.text:
+                    shp.text_frame.text = CORPORATE_FOOTER_TEXT
+                    for p in shp.text_frame.paragraphs:
+                        p.font.name = "Arial"
+                        p.font.size = Pt(9)
+
         has_brand_slides = any(getattr(s, "brand_role", None) is not None for s in presentation.slides)
 
         if not has_brand_slides or len(prs.slides) == 0:
@@ -359,7 +379,9 @@ class PPTXGenerator:
                 if subtitle_ph:
                     render_title_block(subtitle_ph, TitleBlock(text=sub_text, level=2))
                     self.placeholders_populated_count += 1
-            slide_blocks = slide_ir.blocks
+            text_blocks = [b for b in slide_ir.blocks if isinstance(b, (ParagraphBlock, BulletListBlock, QuoteBlock))]
+            visual_blocks = [b for b in slide_ir.blocks if not isinstance(b, (ParagraphBlock, BulletListBlock, QuoteBlock))]
+            slide_blocks = text_blocks + visual_blocks
 
         body_phs = self._find_all_placeholders_by_type(slide_shape, ["BODY", "OBJECT", "CONTENT", "TEXT"])
         pic_phs = self._find_all_placeholders_by_type(slide_shape, ["PICTURE"])
@@ -380,7 +402,10 @@ class PPTXGenerator:
                 tbl_idx += 1
 
             if not target_ph and body_phs:
-                target_ph = body_phs[i % len(body_phs)]
+                if slide_ir.intent in (SlideIntent.TWO_COLUMN, SlideIntent.COMPARISON) and len(slide_blocks) == 2 and len(body_phs) >= 2:
+                    target_ph = body_phs[i % len(body_phs)]
+                else:
+                    target_ph = body_phs[0]
 
             if target_ph:
                 used_ph_ids.add(getattr(target_ph, "shape_id", id(target_ph)))
@@ -388,6 +413,18 @@ class PPTXGenerator:
             tf = target_ph.text_frame if target_ph and hasattr(target_ph, "text_frame") else None
 
             slide_h = self.tmpl_meta.slide_height_inches if getattr(self, "tmpl_meta", None) and hasattr(self.tmpl_meta, "slide_height_inches") else 7.5
+            # Track running Y-offset across ALL preceding blocks on this slide to prevent shape overlap
+            base_top = target_ph.top.inches if target_ph else 3.99
+            calc_top = base_top
+            if i > 0 and target_ph:
+                prev_h_total = 0.0
+                for prev_idx in range(i):
+                    prev_b = slide_blocks[prev_idx]
+                    ph_w = target_ph.width.inches if hasattr(target_ph, "width") else 11.34
+                    prev_h_total += prev_b.estimate_height(ph_w) + 0.35
+                if prev_h_total > 0:
+                    calc_top = min(10.2, base_top + prev_h_total)
+
             if isinstance(block, ParagraphBlock) and tf:
                 render_paragraph_block(tf, block, slide_height_inches=slide_h)
                 self.placeholders_populated_count += 1
@@ -395,28 +432,28 @@ class PPTXGenerator:
                 render_bullet_list_block(tf, block, slide_height_inches=slide_h)
                 self.placeholders_populated_count += 1
             elif isinstance(block, TableBlock):
-                left = target_ph.left.inches if target_ph else 1.0
-                top = target_ph.top.inches if target_ph else 2.0
-                width = target_ph.width.inches if target_ph else 8.0
+                left = target_ph.left.inches if target_ph else 1.83
+                width = target_ph.width.inches if target_ph else 11.34
                 height = target_ph.height.inches if target_ph else 4.0
-                render_table_block(slide_shape, block, left, top, width, height)
+                render_table_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
             elif isinstance(block, ImageBlock):
-                left = target_ph.left.inches if target_ph else 1.0
-                top = target_ph.top.inches if target_ph else 2.0
-                width = target_ph.width.inches if target_ph else 8.0
+                left = target_ph.left.inches if target_ph else 1.83
+                width = target_ph.width.inches if target_ph else 11.34
                 height = target_ph.height.inches if target_ph else 4.5
-                render_image_block(slide_shape, block, left, top, width, height)
+                render_image_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
-            elif isinstance(block, CodeBlock) and tf:
-                render_code_block(tf, block)
+            elif isinstance(block, CodeBlock):
+                left = target_ph.left.inches if target_ph else 1.83
+                width = target_ph.width.inches if target_ph else 11.34
+                height = target_ph.height.inches if target_ph else 4.5
+                render_code_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
             elif isinstance(block, QuoteBlock) and tf:
-                qp = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-                qp.text = f'"{block.text.strip().strip(chr(34))}"'
+                qp = tf.add_paragraph() if (tf.paragraphs and not tf.paragraphs[0].text) else tf.add_paragraph()
                 qp.level = 0
-                qp.space_before = Pt(4)
-                qp.space_after = Pt(4)
+                qp.space_before = Pt(6)
+                qp.space_after = Pt(6)
                 try:
                     from pptx.oxml import parse_xml
                     q_pPr = qp._p.get_or_add_pPr()
@@ -426,18 +463,90 @@ class PPTXGenerator:
                     q_pPr.insert(0, parse_xml('<a:buNone xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'))
                 except Exception:
                     pass
-                for r in qp.runs:
-                    r.font.name = "Arial"
-                    r.font.italic = True
-                    r.font.size = Pt(16)
+
+                runs_to_render = block.runs if block.runs else [InlineRun(text=block.text, is_italic=True)]
+                qp.text = ""
+                r_start = qp.add_run()
+                r_start.text = '"'
+                r_start.font.name = "Arial"
+                r_start.font.italic = True
+                r_start.font.size = Pt(18)
+                r_start.font.color.rgb = RGBColor(11, 79, 108)
+
+                for run in runs_to_render:
+                    r_txt = run.text.strip('"')
+                    if not r_txt:
+                        continue
+                    r = qp.add_run()
+                    r.text = r_txt
+                    r.font.name = "Consolas" if run.is_code else "Arial"
+                    r.font.size = Pt(18)
+                    r.font.bold = run.is_bold
+                    r.font.italic = run.is_italic or (not run.is_bold and not run.is_code)
+                    r.font.color.rgb = RGBColor(86, 156, 214) if run.is_code else RGBColor(11, 79, 108)
+
+                r_end = qp.add_run()
+                r_end.text = '"'
+                r_end.font.name = "Arial"
+                r_end.font.italic = True
+                r_end.font.size = Pt(18)
+                r_end.font.color.rgb = RGBColor(11, 79, 108)
                 self.placeholders_populated_count += 1
 
-        # Clear prompt text in unused body placeholders to prevent "Click to add text"
-        for ph in body_phs:
-            ph_id = getattr(ph, "shape_id", id(ph))
-            if ph_id not in used_ph_ids and hasattr(ph, "text_frame") and ph.text_frame:
-                ph.text_frame.text = ""
-                self.placeholders_skipped_count += 1
+        # Remove unpopulated placeholder shapes from slide DOM to prevent ghost edit boxes and stray prompt characters
+        for ph in body_phs + pic_phs + tbl_phs:
+            if hasattr(ph, "text_frame") and ph.text_frame:
+                if not ph.text_frame.text.strip():
+                    try:
+                        ph._element.getparent().remove(ph._element)
+                        self.placeholders_skipped_count += 1
+                    except Exception:
+                        ph.text_frame.text = ""
+
+        # Apply corporate visual branding (vertical blue accent bar, footer, page badge)
+        self._apply_corporate_branding_to_slide(slide_shape, slide_ir)
+
+    def _apply_corporate_branding_to_slide(self, slide_shape: Any, slide_ir: Slide) -> None:
+        """Apply corporate visual branding (vertical blue accent bar and corporate footer) to dynamic slides."""
+        all_shps = get_all_slide_shapes(slide_shape.shapes)
+
+        # 1. Vertical Blue Accent Bar (Rectangle 12)
+        has_accent_bar = False
+        for shp in all_shps:
+            if getattr(shp, "left", None) and getattr(shp, "top", None) and getattr(shp, "width", None):
+                if shp.left.inches < 0.4 and shp.top.inches < 0.5 and 0.15 <= shp.width.inches <= 0.45:
+                    has_accent_bar = True
+                    break
+
+        if not has_accent_bar and hasattr(slide_shape, "slide_layout") and slide_shape.slide_layout:
+            for l_shp in slide_shape.slide_layout.shapes:
+                if getattr(l_shp, "left", None) and getattr(l_shp, "top", None) and getattr(l_shp, "width", None):
+                    if l_shp.left.inches < 0.4 and l_shp.top.inches < 0.5 and 0.15 <= l_shp.width.inches <= 0.45:
+                        has_accent_bar = True
+                        break
+
+        if not has_accent_bar and slide_ir.intent != SlideIntent.TITLE_SLIDE:
+            accent_bar = slide_shape.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                left=Inches(0.0),
+                top=Inches(0.0),
+                width=Inches(0.25),
+                height=Inches(3.70),
+            )
+            accent_bar.fill.solid()
+            accent_bar.fill.fore_color.rgb = RGBColor(11, 79, 108)  # #0B4F6C Corporate Blue
+            accent_bar.line.fill.background()
+
+        # 2. Corporate Footer & Leftover Text Replacement
+        for shp in all_shps:
+            if shp.has_text_frame and shp.text_frame:
+                txt = shp.text_frame.text.strip()
+                if "Standard Business Presentation" in txt:
+                    shp.text_frame.text = CORPORATE_FOOTER_TEXT
+                    for p in shp.text_frame.paragraphs:
+                        p.font.name = "Arial"
+                        p.font.size = Pt(9)
+                        p.font.color.rgb = RGBColor(166, 166, 166)
 
     def _find_placeholder_by_type(self, slide_shape: Any, types: list[str]) -> Optional[Any]:
         """Find first placeholder shape matching type string names."""

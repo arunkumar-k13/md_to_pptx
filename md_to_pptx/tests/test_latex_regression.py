@@ -68,7 +68,7 @@ class TestLaTeXRegression(unittest.TestCase):
         restored = restore_markdown_structure(raw)
         self.assertEqual(restored, raw)
         cleaned = clean_latex_and_inline_math(raw)
-        self.assertEqual(cleaned, "H_2 + O_2 → H_2O")
+        self.assertEqual(cleaned, "H₂ + O₂ → H₂O")
 
     def test_cube_root(self) -> None:
         raw = "$\\sqrt[3]{y}$"

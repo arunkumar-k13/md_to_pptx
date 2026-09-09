@@ -43,16 +43,25 @@ class OverflowStrategy:
             first_items = target_block.items[:item_split_idx]
             second_items = target_block.items[item_split_idx:]
 
+            cur_start = getattr(target_block, "start_index", 1)
             if first_items:
-                kept_blocks.append(BulletListBlock(items=first_items, is_ordered=target_block.is_ordered))
+                kept_blocks.append(BulletListBlock(items=first_items, is_ordered=target_block.is_ordered, start_index=cur_start))
             
             moved_blocks = []
             if second_items:
-                moved_blocks.append(BulletListBlock(items=second_items, is_ordered=target_block.is_ordered))
+                moved_blocks.append(BulletListBlock(items=second_items, is_ordered=target_block.is_ordered, start_index=cur_start + len(first_items)))
             moved_blocks.extend(remaining_blocks)
             
             return kept_blocks, moved_blocks
 
         # Default strategy: move overflowing block and all subsequent blocks to continuation slide
         moved_blocks = [target_block] + remaining_blocks
+
+        # Ensure section header paragraph is not left orphaned at bottom of kept_blocks
+        if kept_blocks and isinstance(kept_blocks[-1], ParagraphBlock):
+            header_txt = kept_blocks[-1].text.strip()
+            if any(header_txt.startswith(prefix) for prefix in ("I.", "II.", "III.", "IV.", "V.", "VI.", "VII.", "VIII.", "IX.", "X.", "**I", "**II", "**III")) or "(" in header_txt:
+                moved_header = kept_blocks.pop()
+                moved_blocks.insert(0, moved_header)
+
         return kept_blocks, moved_blocks

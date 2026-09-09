@@ -41,9 +41,9 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(data.get("service"), "markdown-to-powerpoint-generator")
 
     def test_markdown_to_pptx_endpoint_simple_markdown(self):
-        """POST /api/v1/markdown-to-pptx generates a valid downloadable PPTX attachment from simple Markdown."""
+        """POST /api/v1/generate generates a valid downloadable PPTX attachment from simple Markdown."""
         files = {"file": ("simple.md", io.BytesIO(b"# Simple Slide\n\n- Bullet point one\n- Bullet point two\n"), "text/markdown")}
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
         
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -57,9 +57,9 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertGreaterEqual(len(prs.slides), 1)
 
     def test_markdown_to_pptx_endpoint_content_heavy_markdown_with_tables(self):
-        """POST /api/v1/markdown-to-pptx handles content-heavy Markdown with headings and tables."""
+        """POST /api/v1/generate handles content-heavy Markdown with headings and tables."""
         files = {"file": ("executive.md", io.BytesIO(self.sample_md_content.encode("utf-8")), "text/markdown")}
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -71,13 +71,13 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertGreaterEqual(len(prs.slides), 3)
 
     def test_markdown_to_pptx_endpoint_custom_template_upload(self):
-        """POST /api/v1/markdown-to-pptx accepts an optional custom PPTX template file upload."""
+        """POST /api/v1/generate accepts an optional custom PPTX template file upload."""
         tmpl_bytes = self.template_path.read_bytes()
         files = {
             "file": ("custom_test.md", io.BytesIO(b"# Custom Template Test\n\n- Content point\n"), "text/markdown"),
             "template": ("custom.pptx", io.BytesIO(tmpl_bytes), "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
         }
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -88,33 +88,33 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertGreaterEqual(len(prs.slides), 1)
 
     def test_markdown_to_pptx_does_not_invoke_pdf_exporter(self):
-        """POST /api/v1/markdown-to-pptx generates ONLY PPTX and never calls PDF / LibreOffice exporter."""
+        """POST /api/v1/generate generates ONLY PPTX and never calls PDF / LibreOffice exporter when format='pptx'."""
         files = {"file": ("nopdf.md", io.BytesIO(b"# No PDF Test\n\n- Paragraph content\n"), "text/markdown")}
         
         from md_to_pptx.main import generate_presentation
         with patch("md_to_pptx.api.routes.generate_presentation", side_effect=generate_presentation) as spy_gen:
-            response = client.post("/api/v1/markdown-to-pptx", files=files)
+            response = client.post("/api/v1/generate", files=files)
             self.assertEqual(response.status_code, 200)
             spy_gen.assert_called_once()
             kwargs = spy_gen.call_args.kwargs
-            self.assertFalse(kwargs.get("export_pdf"), "export_pdf must be False for /api/v1/markdown-to-pptx")
+            self.assertFalse(kwargs.get("export_pdf"), "export_pdf must be False when format is pptx")
 
     def test_markdown_to_pptx_invalid_file_extension(self):
-        """POST /api/v1/markdown-to-pptx rejects unsupported input file extensions with 400 Bad Request."""
+        """POST /api/v1/generate rejects unsupported input file extensions with 400 Bad Request."""
         files = {"file": ("invalid.pdf", io.BytesIO(b"%PDF-1.4 header"), "application/pdf")}
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
         
         self.assertEqual(response.status_code, 400)
         data = response.json()
         self.assertIn("invalid_file_type", str(data))
 
     def test_markdown_to_pptx_invalid_template_extension(self):
-        """POST /api/v1/markdown-to-pptx rejects non-PPTX template files with 400 Bad Request."""
+        """POST /api/v1/generate rejects non-PPTX template files with 400 Bad Request."""
         files = {
             "file": ("test.md", io.BytesIO(b"# Test\n"), "text/markdown"),
             "template": ("bad_template.docx", io.BytesIO(b"word content"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         }
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
 
         self.assertEqual(response.status_code, 400)
         data = response.json()
@@ -123,7 +123,7 @@ class TestAPIEndpoints(unittest.TestCase):
     def test_markdown_to_pptx_empty_file(self):
         """POST /api/v1/markdown-to-pptx rejects empty file uploads with 400 Bad Request."""
         files = {"file": ("empty.md", io.BytesIO(b""), "text/markdown")}
-        response = client.post("/api/v1/markdown-to-pptx", files=files)
+        response = client.post("/api/v1/generate", files=files)
 
         self.assertEqual(response.status_code, 400)
         data = response.json()
@@ -145,31 +145,6 @@ class TestAPIEndpoints(unittest.TestCase):
         res_data = response_bad.json()
         self.assertIn("invalid_format", str(res_data))
 
-
-
-    def test_generate_markdown_endpoint_from_prompt(self):
-        """POST /api/v1/generate-markdown creates a downloadable .md or .txt file attachment from a prompt string."""
-        response = client.post(
-            "/api/v1/generate-markdown",
-            data={"prompt": "AI Transformation in Healthcare", "format": "md"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("text/markdown", response.headers["content-type"])
-        self.assertTrue(len(response.content) > 100)
-        self.assertIn(b"# ", response.content)
-
-        # Test txt format export
-        response_txt = client.post(
-            "/api/v1/generate-markdown",
-            data={"prompt": "Zero Trust Architecture", "format": "txt"},
-        )
-        self.assertEqual(response_txt.status_code, 200)
-        self.assertIn("text/plain", response_txt.headers["content-type"])
-        self.assertTrue(len(response_txt.content) > 100)
-
-        # Test empty prompt validation error
-        response_bad = client.post("/api/v1/generate-markdown", data={"prompt": ""})
-        self.assertIn(response_bad.status_code, (400, 422))
 
 
 if __name__ == "__main__":

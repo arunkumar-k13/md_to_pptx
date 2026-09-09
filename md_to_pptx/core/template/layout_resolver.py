@@ -110,13 +110,13 @@ class SlideLayoutResolver:
                 score += 4.0
                 reasons.append("Section Divider Layout Match")
 
-        elif intent == SlideIntent.IMAGE_SLIDE or has_image:
+        elif intent == SlideIntent.IMAGE_SLIDE:
             if layout.has_picture:
                 score += 4.0
                 reasons.append("Picture Placeholder Signature Match")
-            elif any(k in l_name for k in ("picture", "image", "photo")):
-                score += 3.5
-                reasons.append("Picture Layout Name Match")
+            elif layout.has_body:
+                score += 3.0
+                reasons.append("Image Card rendered in Content Placeholder")
 
         elif intent == SlideIntent.TABLE_SLIDE or has_table:
             if layout.has_table:

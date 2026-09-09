@@ -138,20 +138,13 @@ class PresentationDesignEngine:
             sec_title = sec.title
             blocks = sec.blocks
 
-            if not blocks:
+            # Skip duplicate section slide if title matches main document cover title and section has no body blocks (or only H1 title)
+            if doc.title and sec_title == doc.title and not [b for b in blocks if b.block_type != ContentBlockType.SECTION_HEADER]:
                 continue
 
-            first_node = blocks[0].ast_node
-            
-            has_h2_first = isinstance(first_node, HeaderNode) and first_node.level == 2
-            if sec.title == doc.title and has_h2_first:
-                title = first_node.text
-                subtitle = ""
-                body_blocks = blocks[1:]
-            else:
-                title = sec_title
-                subtitle = first_node.text if has_h2_first else ""
-                body_blocks = blocks[1:] if has_h2_first else blocks
+            title = sec_title
+            subtitle = ""
+            body_blocks = blocks
 
             intent, why, priority, traits = self._infer_intent_and_traits(title, subtitle, body_blocks)
             density_str, occupancy = self._estimate_density_and_occupancy(body_blocks)

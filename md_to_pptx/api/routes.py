@@ -164,41 +164,47 @@ async def _process_presentation_request(
             )
 
     try:
-        if not file or not hasattr(file, "filename") or not file.filename:
+        original_filename = "uploaded.md"
+        file_content: Optional[bytes] = None
+
+        if file and hasattr(file, "filename") and file.filename:
+            original_filename = file.filename
+            file_ext = Path(original_filename).suffix.lower()
+
+            if file_ext not in ALLOWED_EXTENSIONS:
+                cleanup_directory(temp_dir)
+                logger.warning("API rejected upload with invalid extension '%s': %s", file_ext, original_filename)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "invalid_file_type",
+                        "message": f"Uploaded file extension '{file_ext}' is not supported. Allowed extensions: .md, .markdown, .txt",
+                    },
+                )
+            file_content = await file.read()
+
+        elif markdown_text and isinstance(markdown_text, str) and markdown_text.strip():
+            clean_text = markdown_text.strip()
+            original_filename = "test_input.md"
+            file_content = clean_text.encode("utf-8")
+
+        else:
             cleanup_directory(temp_dir)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
-                    "error": "missing_file",
-                    "message": "Request must include an uploaded Markdown 'file' (.md, .markdown, or .txt).",
+                    "error": "missing_file_or_text",
+                    "message": "Request must include either an uploaded Markdown 'file' (.md, .markdown, or .txt) or a 'markdown_text' string.",
                 },
             )
 
-        original_filename = file.filename or "uploaded.md"
-        file_ext = Path(original_filename).suffix.lower()
-
-        if file_ext not in ALLOWED_EXTENSIONS:
-            cleanup_directory(temp_dir)
-            logger.warning("API rejected upload with invalid extension '%s': %s", file_ext, original_filename)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "invalid_file_type",
-                    "message": f"Uploaded file extension '{file_ext}' is not supported. Allowed extensions: .md, .markdown, .txt",
-                },
-            )
-
-        safe_input_name = re.sub(r"[^\w\.\-]", "_", Path(original_filename).name)
-        temp_md_path = temp_dir_path / safe_input_name
-
-        file_content = await file.read()
         if not file_content or not file_content.strip():
             cleanup_directory(temp_dir)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "error": "empty_file",
-                    "message": "The uploaded file contains 0 bytes.",
+                    "message": "The Markdown input file or text content contains 0 bytes.",
                 },
             )
 
@@ -214,6 +220,8 @@ async def _process_presentation_request(
                 },
             )
 
+        safe_input_name = re.sub(r"[^\w\.\-]", "_", Path(original_filename).name)
+        temp_md_path = temp_dir_path / safe_input_name
         temp_md_path.write_bytes(file_content)
 
         # 6. Execute Presentation Generation Pipeline
@@ -328,107 +336,3 @@ async def generate_presentation_endpoint(
     )
 
 
-@router.post(
-    "/api/v1/markdown-to-pptx",
-    summary="Generate PowerPoint Presentation from Markdown",
-    description="Accepts a Markdown file as a multipart/form-data upload and generates ONLY a PowerPoint (.pptx) presentation attachment.",
-    responses={
-        200: {
-            "description": "Generated PowerPoint presentation (.pptx) file returned as a downloadable attachment.",
-            "content": {
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
-                    "schema": {"type": "string", "format": "binary"}
-                },
-            },
-        },
-        400: {"model": ErrorResponse, "description": "Invalid request (unsupported file extension or template file)."},
-        404: {"model": ErrorResponse, "description": "Required corporate template file not found."},
-        422: {"model": ErrorResponse, "description": "Unprocessable request parameters."},
-        500: {"model": ErrorResponse, "description": "Unexpected presentation generation error."},
-    },
-)
-async def markdown_to_pptx_endpoint(
-    file: UploadFile = File(..., description="Input Markdown file (.md, .markdown, or .txt)."),
-    template: Optional[UploadFile] = File(default=None, description="Optional custom PowerPoint template (.pptx) file upload."),
-) -> FileResponse:
-    """REST API endpoint specifically for Markdown-to-PPTX presentation generation."""
-    return await _process_presentation_request(
-        file=file,
-        template=template,
-        format_clean="pptx",
-        preferred_exporter="libreoffice",
-    )
-
-
-@router.post(
-    "/api/v1/generate-markdown",
-    summary="Generate Markdown Document from Prompt or Query",
-    description="Accepts a topic, query, or prompt and generates a clean, structured Markdown (.md or .txt) presentation file attachment.",
-    responses={
-        200: {
-            "description": "Generated Markdown file returned as a downloadable attachment.",
-            "content": {
-                "text/markdown": {"schema": {"type": "string", "format": "binary"}},
-                "text/plain": {"schema": {"type": "string", "format": "binary"}},
-            },
-        },
-        400: {"model": ErrorResponse, "description": "Invalid request parameters (empty prompt)."},
-        500: {"model": ErrorResponse, "description": "Unexpected Markdown generation error."},
-    },
-)
-async def generate_markdown_endpoint(
-    prompt: str = Form(..., description="Topic, prompt, or query to generate Markdown content from."),
-    format: Optional[str] = Form("markdown", description="Target file format ('markdown', 'md', or 'txt'). Defaults to 'md'."),
-    filename: Optional[str] = Form(None, description="Optional custom filename stem (e.g., 'ai_healthcare')."),
-) -> FileResponse:
-    """REST API endpoint generating structured Markdown presentation file from a prompt/query."""
-    clean_prompt = prompt.strip() if prompt else ""
-    if not clean_prompt or clean_prompt.lower() == "string":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "missing_prompt",
-                "message": "Parameter 'prompt' cannot be empty.",
-            },
-        )
-
-    fmt_clean = format.strip().lower() if format else "md"
-    file_ext = ".txt" if fmt_clean in ("txt", "text", "plain") else ".md"
-    media_type = "text/plain" if file_ext == ".txt" else "text/markdown"
-
-    temp_dir = tempfile.mkdtemp(prefix="md2pptx_gen_")
-    temp_dir_path = Path(temp_dir).resolve()
-
-    try:
-        markdown_content = generate_markdown_from_prompt(clean_prompt)
-        doc_ast = MarkdownParser().parse(markdown_content)
-
-        stem = filename.strip() if (filename and filename.strip() and filename.strip().lower() != "string") else ""
-        out_filename = sanitize_topic_filename(
-            topic=doc_ast.title,
-            fallback_stem=stem or "generated_markdown",
-            file_ext=file_ext,
-        )
-
-        out_path = temp_dir_path / out_filename
-        out_path.write_text(markdown_content, encoding="utf-8")
-
-        logger.info("API generated Markdown attachment '%s' for prompt '%s'", out_filename, clean_prompt[:30])
-
-        return FileResponse(
-            path=str(out_path.resolve()),
-            media_type=media_type,
-            filename=out_filename,
-            background=BackgroundTask(cleanup_directory, temp_dir),
-        )
-    except Exception as err:
-        cleanup_directory(temp_dir)
-        logger.error("Failed to generate Markdown for prompt '%s': %s", clean_prompt[:30], err, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "markdown_generation_failed",
-                "message": "Failed to generate Markdown document from prompt.",
-                "detail": str(err),
-            },
-        )
