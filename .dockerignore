@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.git
+.gitignore
+scratch/
+output/
+vscode_outputs/
+test_*.py
+my_test.py
+run_string_tests.py
