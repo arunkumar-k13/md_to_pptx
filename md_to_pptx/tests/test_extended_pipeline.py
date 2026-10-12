@@ -91,10 +91,13 @@ Content for edge case.
 
     def test_multi_table_stacking(self):
         """Verify multiple tables in a section do not overlap at identical coordinates."""
+        import tempfile
         from md_to_pptx.main import generate_presentation
-        tmp_md = Path("scratch/test_tables.md")
-        tmp_md.parent.mkdir(parents=True, exist_ok=True)
-        tmp_md.write_text("""## Tables Section
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            tmp_md = tmp_path / "test_tables.md"
+            tmp_md.write_text("""## Tables Section
 
 | ID | Name |
 | -- | ---- |
@@ -105,14 +108,14 @@ Content for edge case.
 | Test   | 100   |
 """, encoding="utf-8")
 
-        report = generate_presentation(
-            markdown_path=tmp_md,
-            template_path=Path("corporate_template.pptx"),
-            output_dir=Path("scratch/out_tables"),
-        )
-        prs = PPTXPresentation(report.pptx_path)
-        table_shapes = [shp for s in prs.slides for shp in s.shapes if shp.has_table]
-        self.assertTrue(len(table_shapes) >= 2)
+            report = generate_presentation(
+                markdown_path=tmp_md,
+                template_path=Path("corporate_template.pptx"),
+                output_dir=tmp_path / "out_tables",
+            )
+            prs = PPTXPresentation(report.pptx_path)
+            table_shapes = [shp for s in prs.slides for shp in s.shapes if shp.has_table]
+            self.assertTrue(len(table_shapes) >= 2)
 
 
 if __name__ == "__main__":

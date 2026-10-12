@@ -18,10 +18,11 @@ venv.bak/
 .coverage
 htmlcov/
 
-# Generated output directory
+# Generated output & scratch directories
 output/*
 !output/.gitkeep
-vscode_outputs/*
+vscode_outputs/
+scratch/
 *.zip
 
 # Local Environment Variables & Logs

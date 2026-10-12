@@ -16,7 +16,6 @@ from starlette.background import BackgroundTask
 from md_to_pptx.api.schemas import ErrorResponse, HealthResponse
 from md_to_pptx.config.settings_loader import load_settings
 from md_to_pptx.core.exporters.environment import PdfEnvironmentDetector
-from md_to_pptx.core.markdown_generator import generate_markdown_from_prompt
 from md_to_pptx.core.markdown_parser import MarkdownParser, restore_markdown_structure
 from md_to_pptx.main import generate_presentation
 from md_to_pptx.utils.logger import setup_logger
