@@ -82,12 +82,22 @@ class BrandSlideManager:
             )
             new_slides.append(about_slide)
 
-        # 4. BRAND_CASE_STUDY
-        if b_cfg.case_study and "BRAND_CASE_STUDY" in brand_map:
+        # 4. BRAND_CASE_STUDY (Only inject if markdown document contains a Case Study section)
+        case_study_slide = None
+        case_study_orig_idx = -1
+        for idx, s in enumerate(presentation.slides):
+            t_text = (s.title.text if s.title and s.title.text else "").lower()
+            if "case study" in t_text or "case_study" in t_text:
+                case_study_slide = s
+                case_study_orig_idx = idx
+                break
+
+        if b_cfg.case_study and "BRAND_CASE_STUDY" in brand_map and case_study_slide is not None:
             cs_info = brand_map["BRAND_CASE_STUDY"]
             cs_slide = Slide(
                 intent=SlideIntent.CONTENT_SLIDE,
-                title=TitleBlock(text=cs_info.get("title", "Case Study")),
+                title=case_study_slide.title or TitleBlock(text=cs_info.get("title", "Case Study")),
+                blocks=case_study_slide.blocks,
                 brand_role="BRAND_CASE_STUDY",
                 brand_slide_index=cs_info.get("slide_index"),
                 brand_layout_index=cs_info.get("layout_index", 1),
@@ -95,8 +105,10 @@ class BrandSlideManager:
             new_slides.append(cs_slide)
 
         # 5. Dynamic AI Content Slides
-        for s in presentation.slides:
+        for idx, s in enumerate(presentation.slides):
             if s.intent != SlideIntent.TITLE_SLIDE and s.intent != SlideIntent.THANK_YOU_SLIDE:
+                if idx == case_study_orig_idx:
+                    continue  # Already inserted as BRAND_CASE_STUDY
                 new_slides.append(s)
 
         # 6. BRAND_THANK_YOU

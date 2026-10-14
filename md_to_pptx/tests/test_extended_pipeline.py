@@ -117,6 +117,88 @@ Content for edge case.
             table_shapes = [shp for s in prs.slides for shp in s.shapes if shp.has_table]
             self.assertTrue(len(table_shapes) >= 2)
 
+    def test_case_study_omitted_when_not_in_markdown(self):
+        """Verify Case Study brand slide is omitted when markdown does not contain a Case Study."""
+        import tempfile
+        from md_to_pptx.main import generate_presentation
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            tmp_md = tmp_path / "no_cs.md"
+            tmp_md.write_text("""# Standard Overview Presentation
+
+## Executive Summary
+This presentation covers general architectural updates.
+
+## Technical Milestones
+- First milestone completed.
+- Second milestone on track.
+""", encoding="utf-8")
+
+            report = generate_presentation(
+                markdown_path=tmp_md,
+                template_path=Path("corporate_template.pptx"),
+                output_dir=tmp_path / "out_no_cs",
+            )
+            prs = PPTXPresentation(report.pptx_path)
+            # Ensure no slide has title "Case Study" or contains dummy "Lorem ipsum"
+            slide_titles = [s.shapes.title.text if s.shapes.title and s.shapes.title.has_text_frame else "" for s in prs.slides]
+            self.assertFalse(any("case study" in t.lower() for t in slide_titles), f"Case study slide should not be present in {slide_titles}")
+
+            # Verify no 'Lorem ipsum' dummy text exists across any slide
+            for slide in prs.slides:
+                for shp in slide.shapes:
+                    if shp.has_text_frame:
+                        self.assertNotIn("lorem ipsum", shp.text_frame.text.lower())
+
+    def test_case_study_populated_when_present_in_markdown(self):
+        """Verify Case Study brand slide is populated and dummy text replaced when markdown contains a Case Study."""
+        import tempfile
+        from md_to_pptx.main import generate_presentation
+        from md_to_pptx.core.generator.pptx_generator import get_all_slide_shapes
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            tmp_md = tmp_path / "with_cs.md"
+            tmp_md.write_text("""# Clinical Platform Presentation
+
+## Case Study: Bio-Extraction Engine
+* **Objective:** Automate extraction of trial endpoints from clinical records.
+* **Data Source:** 45,000 FDA public trial registry documents.
+* **Work Carried:** Trained BioBERT NER pipeline with distributed inference.
+* **Skills:** Python, PyTorch, HuggingFace, FastAPI, Docker.
+* **Insights Delivered:** 85% acceleration in trial review turnaround.
+
+## Next Steps
+- Rollout to staging environment.
+""", encoding="utf-8")
+
+            report = generate_presentation(
+                markdown_path=tmp_md,
+                template_path=Path("corporate_template.pptx"),
+                output_dir=tmp_path / "out_with_cs",
+            )
+            prs = PPTXPresentation(report.pptx_path)
+
+            # Locate the Case Study slide
+            cs_slides = [s for s in prs.slides if s.shapes.title and "case study" in s.shapes.title.text.lower()]
+            self.assertEqual(len(cs_slides), 1, "Exactly one Case Study slide should be generated")
+            cs_slide = cs_slides[0]
+
+            # Verify title is updated to the markdown section's title
+            self.assertIn("Bio-Extraction Engine", cs_slide.shapes.title.text)
+
+            # Verify all text across all shapes on the slide: real content present, zero lorem ipsum
+            all_text = " ".join(
+                shp.text_frame.text for shp in get_all_slide_shapes(cs_slide.shapes) if shp.has_text_frame
+            )
+            self.assertNotIn("lorem ipsum", all_text.lower(), "Placeholder lorem ipsum must be completely replaced")
+            self.assertIn("Automate extraction of trial endpoints", all_text)
+            self.assertIn("45,000 FDA public trial registry", all_text)
+            self.assertIn("Trained BioBERT NER pipeline", all_text)
+            self.assertIn("Python, PyTorch", all_text)
+            self.assertIn("85% acceleration in trial review", all_text)
+
 
 if __name__ == "__main__":
     unittest.main()

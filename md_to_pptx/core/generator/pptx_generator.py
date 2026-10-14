@@ -320,20 +320,74 @@ class PPTXGenerator:
                 shp for shp in all_shps
                 if shp.has_text_frame and "lorem ipsum" in shp.text_frame.text.lower()
             ]
+            # Ensure top-to-bottom vertical order matching Objective, Data Source, Work Carried, Skills, Insights Delivered
+            body_lorem_shapes.sort(key=lambda s: s.top.inches if hasattr(s, "top") and s.top else 0.0)
 
+            raw_entries: list[str] = []
             if slide_ir.blocks:
-                for i, block in enumerate(slide_ir.blocks):
-                    if i < len(body_lorem_shapes):
-                        tf = body_lorem_shapes[i].text_frame
-                        if isinstance(block, ParagraphBlock):
-                            render_paragraph_block(tf, block)
-                            self.placeholders_populated_count += 1
-                        elif isinstance(block, BulletListBlock):
-                            render_bullet_list_block(tf, block)
-                            self.placeholders_populated_count += 1
-            else:
-                # If no markdown content provided, preserve template or clear placeholder text
-                pass
+                for block in slide_ir.blocks:
+                    if isinstance(block, BulletListBlock):
+                        for itm in block.items:
+                            txt = itm.text.strip() if hasattr(itm, "text") and itm.text else ""
+                            if txt:
+                                raw_entries.append(txt)
+                    elif isinstance(block, ParagraphBlock):
+                        txt = block.text.strip() if block.text else ""
+                        if txt:
+                            raw_entries.append(txt)
+
+            category_defs = [
+                ("OBJECTIVE", ["objective", "goal", "purpose", "problem", "scope"]),
+                ("DATA SOURCE", ["data source", "data", "source", "dataset", "inputs"]),
+                ("WORK CARRIED", ["work carried", "work", "method", "implementation", "solution", "approach", "architecture", "activities"]),
+                ("SKILLS", ["skills", "skill", "tech stack", "technologies", "tools", "skills used"]),
+                ("INSIGHTS DELIVERED", ["insights delivered", "insights", "insight", "results", "result", "outcome", "outcomes", "impact", "metrics", "benefits"]),
+            ]
+
+            category_values: dict[int, str] = {}
+            unmatched_entries: list[str] = []
+
+            for entry in raw_entries:
+                matched_cat = None
+                clean_val = entry
+
+                split_parts = entry.split(":", 1) if ":" in entry else (entry.split(" - ", 1) if " - " in entry else None)
+                if split_parts:
+                    prefix_clean = split_parts[0].replace("*", "").strip().lower()
+                    for cat_idx, (cat_name, keywords) in enumerate(category_defs):
+                        if cat_idx not in category_values and any(kw == prefix_clean or prefix_clean.startswith(kw) for kw in keywords):
+                            matched_cat = cat_idx
+                            clean_val = split_parts[1].strip()
+                            break
+
+                if matched_cat is not None:
+                    category_values[matched_cat] = clean_val
+                else:
+                    unmatched_entries.append(entry)
+
+            unmatched_idx = 0
+            for cat_idx in range(len(body_lorem_shapes)):
+                if cat_idx not in category_values and unmatched_idx < len(unmatched_entries):
+                    val = unmatched_entries[unmatched_idx]
+                    if ":" in val:
+                        val = val.split(":", 1)[1].strip()
+                    category_values[cat_idx] = val
+                    unmatched_idx += 1
+
+            for cat_idx, shp in enumerate(body_lorem_shapes):
+                tf = shp.text_frame
+                val = category_values.get(cat_idx, "")
+                if val:
+                    clean_display = val.replace("**", "").replace("*", "").strip()
+                    tf.text = clean_display
+                    if tf.paragraphs and tf.paragraphs[0].runs:
+                        r = tf.paragraphs[0].runs[0]
+                        r.font.name = "Inter"
+                        r.font.size = Pt(16 if len(clean_display) > 80 else 20)
+                    self.placeholders_populated_count += 1
+                else:
+                    # Clear dummy placeholder completely so no Latin text remains
+                    tf.text = ""
 
             # Dynamically adjust label textbox height and body textbox position to prevent text overlap
             self._adjust_case_study_label_and_body_overlap(slide_shape)
