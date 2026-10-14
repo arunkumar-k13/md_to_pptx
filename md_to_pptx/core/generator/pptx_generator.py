@@ -390,7 +390,7 @@ class PPTXGenerator:
                     tf.text = ""
 
             # Dynamically adjust label textbox height and body textbox position to prevent text overlap
-            self._adjust_case_study_label_and_body_overlap(slide_shape)
+            self._adjust_case_study_label_and_body_overlap(slide_shape, body_shapes=body_lorem_shapes)
 
         elif role == "BRAND_THANK_YOU":
             if slide_ir.title:
@@ -619,16 +619,19 @@ class PPTXGenerator:
                 matched.append(shape)
         return matched
 
-    def _adjust_case_study_label_and_body_overlap(self, slide_shape: Any) -> None:
+    def _adjust_case_study_label_and_body_overlap(self, slide_shape: Any, body_shapes: Optional[list[Any]] = None) -> None:
         """Measure label text wrapping and dynamically adjust label height, width, and body top coordinates.
 
         Ensures label textboxes and body textboxes never vertically overlap regardless of label length.
         """
         all_shps = get_all_slide_shapes(slide_shape.shapes)
-        body_lorem_shapes = [
-            shp for shp in all_shps
-            if shp.has_text_frame and "lorem ipsum" in shp.text_frame.text.lower()
-        ]
+        if body_shapes is not None:
+            body_lorem_shapes = list(body_shapes)
+        else:
+            body_lorem_shapes = [
+                shp for shp in all_shps
+                if shp.has_text_frame and "lorem ipsum" in shp.text_frame.text.lower()
+            ]
         body_lorem_shapes.sort(key=lambda s: s.top)
 
         other_text_shapes = [
@@ -636,7 +639,7 @@ class PPTXGenerator:
             if shp.has_text_frame
             and getattr(shp, "left", None)
             and shp.left.inches > 2.0
-            and "lorem ipsum" not in shp.text_frame.text.lower()
+            and shp not in body_lorem_shapes
             and not shp.name.lower().startswith("title")
         ]
 
