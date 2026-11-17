@@ -2,7 +2,6 @@
 
 import unittest
 from md_to_pptx.core.markdown_parser import (
-    MarkdownParser,
     clean_latex_and_inline_math,
     restore_markdown_structure,
 )

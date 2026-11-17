@@ -13,10 +13,13 @@
 ## 2. Key Features
 
 - **Markdown → PPTX & PDF**: Converts Markdown into branded PowerPoint presentations and PDF documents.
-- **Corporate & Custom PPTX Templates**: Uses `corporate_template.pptx` by default or dynamically introspects uploaded custom `.pptx` templates.
-- **LaTeX & Mathematical Expressions**: Parses inline and block LaTeX equations, fractions, roots, matrices, subscripts/superscripts, and scientific notation.
+- **Corporate & Custom PPTX Templates**: Uses `corporate_template.pptx` by default or dynamically introspects uploaded custom `.pptx` templates with full 16:9 widescreen and 4:3 aspect ratio support.
+- **Shared Typography & Font Metrics Engine**: Integrates Arial-compatible advance character metrics (`typography.py` & `font_metrics.py`) so text height calculation and line-wrapping accurately match OpenXML rendering.
+- **Template Placeholder Geometry Clamping**: Automatically clamps out-of-bounds placeholders from 3rd-party templates to maintain clean slide borders and prevent off-screen text wrapping.
+- **Promotional Watermark Purging**: Automatically purges third-party promotional watermarks (`fppt.com`, etc.) across slide masters, layouts, and slides.
+- **LaTeX & Mathematical Expressions**: Parses inline and block LaTeX equations, fractions, roots, matrices, subscripts/superscripts, and scientific notation into clean Unicode.
 - **Brand Slide Manager**: Preserves corporate branded slides (`BRAND_COVER`, `BRAND_CASE_STUDY`, `BRAND_ABOUT_COMPANY`, `BRAND_THANK_YOU`, `BRAND_DISCLAIMER`).
-- **Calibrated Overflow & Pagination Engine**: Evaluates content heights against usable slide bounds, keeping standard lists (up to 10 items) and multi-heading sections intact while splitting overcrowded slides cleanly into `(Continued)` slides above the footer line.
+- **Calibrated Overflow & Pagination Engine**: Height-aware pagination with orphan subheading protection keeps lists and topics unified while splitting overcrowded slides cleanly into `(Continued)` slides above the footer line.
 - **Table Word-Wrap Protection**: Column width calculations enforce word length thresholds to prevent mid-word hyphenation splits.
 - **LibreOffice PDF Export**: Headless PDF conversion via LibreOffice (`soffice`), eliminating desktop Microsoft PowerPoint software dependencies on Linux servers.
 - **Open XML Validation**: Validates generated `.pptx` package structures before file delivery.
@@ -61,6 +64,7 @@ DOJO/
 ├── .env.example                   # Environment configuration template
 ├── .gitignore                     # Git exclusion rules
 ├── corporate_template.pptx        # Default Molecular Connections corporate template
+├── generic_template.pptx          # Plain 4:3 template for multi-template testing
 ├── run_api.bat                    # Windows API launcher script
 ├── run_api.sh                     # Linux/macOS API launcher script
 ├── output/                        # Directory for CLI generated outputs
@@ -82,6 +86,8 @@ DOJO/
     │   ├── markdown_parser.py
     │   ├── presentation_model.py
     │   ├── slide_planner.py
+    │   ├── typography.py          # Shared font sizes/spacing + text measurement
+    │   ├── font_metrics.py        # Arial-compatible character widths
     │   ├── exporters/             # PDF Exporters (LibreOffice)
     │   ├── generator/             # PowerPoint Generator & Shape Renderers
     │   ├── overflow/              # Spatial Overflow Analyzer & Paginator
@@ -211,6 +217,7 @@ Returns the operational status of the service:
 | `DEFAULT_PPTX_TEMPLATE` | `corporate_template.pptx` | Path to default PowerPoint corporate template. |
 | `LIBREOFFICE_BINARY` | Auto-detected (`soffice`) | Path to LibreOffice executable for PDF export. |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Maximum allowed upload file size in MB. |
+| `TEMPLATE_CACHE_DIR` | `<system temp>/md_to_pptx/template_cache` | Where analysed template metadata is cached. |
 
 ---
 
@@ -218,10 +225,13 @@ Returns the operational status of the service:
 
 ```bash
 # Generate PPTX from CLI
-python -m md_to_pptx.main samples/sample_executive_presentation.md --template corporate_template.pptx --output output/
+python -m md_to_pptx.main -m samples/sample_executive_presentation.md -t corporate_template.pptx -o output/
 
 # Generate PPTX and PDF from CLI
-python -m md_to_pptx.main samples/sample_executive_presentation.md --template corporate_template.pptx --output output/ --pdf
+python -m md_to_pptx.main -m samples/sample_executive_presentation.md -t corporate_template.pptx -o output/ -p
+
+# Flags: -m/--markdown (required), -t/--template (required), -o/--output-dir (default: output),
+#        -p/--pdf (also export PDF), -c/--config (custom settings.yaml)
 ```
 
 ---
@@ -229,5 +239,6 @@ python -m md_to_pptx.main samples/sample_executive_presentation.md --template co
 ## 11. Running Automated Tests
 
 ```bash
-python -m unittest discover -s md_to_pptx/tests -v
+python -m pytest md_to_pptx/tests -q
+# or: python -m unittest discover -s md_to_pptx/tests -v
 ```

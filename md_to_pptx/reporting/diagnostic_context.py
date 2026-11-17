@@ -5,7 +5,7 @@ Runtime telemetry collector tracking generation duration, layout usage, overflow
 
 from __future__ import annotations
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from md_to_pptx.reporting.generation_report import DesignReportRecord, GenerationReport, LayoutMappingRecord, OverflowEvent
 

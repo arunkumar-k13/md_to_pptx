@@ -9,15 +9,10 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from md_to_pptx.core.ast_nodes import (
     BulletListNode,
-    CodeBlockNode,
-    HeaderNode,
-    ImageNode,
-    ParagraphNode,
-    QuoteNode,
     TableNode,
 )
 from md_to_pptx.core.content_analyzer import (

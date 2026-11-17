@@ -123,7 +123,13 @@ class LayoutMetadata:
         body_phs = [p for p in self.placeholders if p.ph_type in ("BODY", "OBJECT", "CONTENT", "TEXT")]
         if body_phs:
             b_ph = body_phs[0]
-            top_in = max(b_ph.top_inches, header_bottom + padding)
+            if b_ph.top_inches > 0:
+                top_in = b_ph.top_inches
+                # Only shift down if placeholder physically collides with the title
+                if top_in < header_bottom:
+                    top_in = header_bottom + padding
+            else:
+                top_in = header_bottom + padding
             left_in = b_ph.left_inches if b_ph.left_inches > 0 else 0.8
             width_in = b_ph.width_inches if b_ph.width_inches > 0 else (s_width - left_in - 0.8)
             b_bottom = b_ph.top_inches + b_ph.height_inches if b_ph.height_inches > 0 else footer_top
@@ -138,11 +144,8 @@ class LayoutMetadata:
         if b_bottom > top_in:
             usable_bottom = min(usable_bottom, b_bottom)
 
-        # Usable height MUST NOT claim more space than exists above usable_bottom
-        raw_available = usable_bottom - top_in - padding
-        usable_height = max(0.2, raw_available)
-        if top_in + usable_height > usable_bottom:
-            usable_height = max(0.1, usable_bottom - top_in)
+        # Usable height is the physical span from top_in to usable_bottom
+        usable_height = max(0.5, usable_bottom - top_in)
 
         return UsableContentBounds(
             top_inches=top_in,
@@ -341,74 +344,92 @@ class TemplateAnalyzer:
         # 2. Build Brand Slide Catalog (inspect pre-existing template slides using multi-heuristics)
         total_slides_in_template = len(prs.slides)
 
-        for s_idx, s in enumerate(prs.slides):
-            s_title = ""
-            full_text_corpus = []
-            img_count = 0
-            has_logo = False
-            has_footer = False
-            has_smartart = False
-            editable_phs = []
-
+        # Check if template is an official Molecular Connections corporate deck
+        all_template_text: List[str] = []
+        for s in prs.slides:
             for shp in s.shapes:
-                if shp.shape_type == 13:  # Picture shape
-                    img_count += 1
-                if "logo" in shp.name.lower() or "brand" in shp.name.lower():
-                    has_logo = True
-                if "smartart" in shp.name.lower() or "diagram" in shp.name.lower() or getattr(shp, "has_smart_art", False):
-                    has_smartart = True
+                if shp.has_text_frame and shp.text_frame and shp.text_frame.text:
+                    all_template_text.append(shp.text_frame.text)
+        for master in prs.slide_masters:
+            for shp in master.shapes:
+                if shp.has_text_frame and shp.text_frame and shp.text_frame.text:
+                    all_template_text.append(shp.text_frame.text)
 
-                if shp.is_placeholder:
-                    ph_t = str(shp.placeholder_format.type).split(".")[-1].split(" ")[0].upper()
-                    if ph_t in ("TITLE", "CENTER_TITLE", "SUBTITLE", "BODY", "OBJECT", "TEXT"):
-                        editable_phs.append(ph_t)
+        joined_template_corpus = " ".join(all_template_text).lower()
+        is_mc_corporate = (
+            "molecular connections" in joined_template_corpus
+            or "proprietary to molecular" in joined_template_corpus
+        )
 
-                if shp.has_text_frame and shp.text_frame.text.strip():
-                    txt = shp.text_frame.text.strip()
-                    full_text_corpus.append(txt)
-                    if not s_title or shp.name.startswith("Title"):
-                        s_title = txt
+        if is_mc_corporate:
+            for s_idx, s in enumerate(prs.slides):
+                s_title = ""
+                full_text_corpus = []
+                img_count = 0
+                has_logo = False
+                has_footer = False
+                has_smartart = False
+                editable_phs = []
 
-                    if "copyright" in txt.lower() or "iso 27001" in txt.lower():
-                        has_footer = True
+                for shp in s.shapes:
+                    if shp.shape_type == 13:  # Picture shape
+                        img_count += 1
+                    if "logo" in shp.name.lower() or "brand" in shp.name.lower():
+                        has_logo = True
+                    if "smartart" in shp.name.lower() or "diagram" in shp.name.lower() or getattr(shp, "has_smart_art", False):
+                        has_smartart = True
 
-            combined_text = " ".join(full_text_corpus).lower()
-            detected_role: Optional[str] = None
+                    if shp.is_placeholder:
+                        ph_t = str(shp.placeholder_format.type).split(".")[-1].split(" ")[0].upper()
+                        if ph_t in ("TITLE", "CENTER_TITLE", "SUBTITLE", "BODY", "OBJECT", "TEXT"):
+                            editable_phs.append(ph_t)
 
-            # Multi-heuristic brand role classification
-            if "disclaimer" in combined_text or "proprietary to molecular connections" in combined_text:
-                detected_role = "BRAND_DISCLAIMER"
-            elif "about company" in combined_text or ("machine learning company" in combined_text and "multilingual" in combined_text):
-                detected_role = "BRAND_ABOUT_COMPANY"
-            elif "case study" in combined_text or "lorem ipsum" in combined_text:
-                if "BRAND_CASE_STUDY" not in brand_slides_map:
-                    detected_role = "BRAND_CASE_STUDY"
-            elif "thank you" in combined_text or "thanks" in combined_text or (s_idx == total_slides_in_template - 1 and img_count > 0):
-                detected_role = "BRAND_THANK_YOU"
-            elif s_idx == 0 or "title here" in combined_text or "welcome" in combined_text:
-                detected_role = "BRAND_COVER"
+                    if shp.has_text_frame and shp.text_frame.text.strip():
+                        txt = shp.text_frame.text.strip()
+                        full_text_corpus.append(txt)
+                        if not s_title or shp.name.startswith("Title"):
+                            s_title = txt
 
-            if detected_role and detected_role not in brand_slides_map:
-                l_id = 0
-                if hasattr(s.slide_layout, "slide_layout_id"):
-                    l_id = int(s.slide_layout.slide_layout_id)
-                l_name = getattr(s.slide_layout, "name", "Brand Layout")
+                        if "copyright" in txt.lower() or "iso 27001" in txt.lower():
+                            has_footer = True
 
-                brand_slides_map[detected_role] = {
-                    "role": detected_role,
-                    "slide_index": s_idx,
-                    "layout_index": l_id,
-                    "layout_name": l_name,
-                    "title": s_title or detected_role.replace("BRAND_", "").replace("_", " ").title(),
-                    "shapes_count": len(s.shapes),
-                    "images_count": img_count,
-                    "logo_detected": has_logo,
-                    "footer_detected": has_footer,
-                    "smartart_detected": has_smartart,
-                    "relationships_preserved": True,
-                    "theme_preserved": True,
-                    "editable_placeholders": editable_phs,
-                }
+                combined_text = " ".join(full_text_corpus).lower()
+                detected_role: Optional[str] = None
+
+                # Multi-heuristic brand role classification for MC corporate template
+                if "disclaimer" in combined_text or "proprietary to molecular connections" in combined_text:
+                    detected_role = "BRAND_DISCLAIMER"
+                elif "about company" in combined_text or ("machine learning company" in combined_text and "multilingual" in combined_text):
+                    detected_role = "BRAND_ABOUT_COMPANY"
+                elif "case study" in combined_text:
+                    if "BRAND_CASE_STUDY" not in brand_slides_map:
+                        detected_role = "BRAND_CASE_STUDY"
+                elif "thank you" in combined_text or "thanks" in combined_text:
+                    detected_role = "BRAND_THANK_YOU"
+                elif s_idx == 0:
+                    detected_role = "BRAND_COVER"
+
+                if detected_role and detected_role not in brand_slides_map:
+                    l_id = 0
+                    if hasattr(s.slide_layout, "slide_layout_id"):
+                        l_id = int(s.slide_layout.slide_layout_id)
+                    l_name = getattr(s.slide_layout, "name", "Brand Layout")
+
+                    brand_slides_map[detected_role] = {
+                        "role": detected_role,
+                        "slide_index": s_idx,
+                        "layout_index": l_id,
+                        "layout_name": l_name,
+                        "title": s_title or detected_role.replace("BRAND_", "").replace("_", " ").title(),
+                        "shapes_count": len(s.shapes),
+                        "images_count": img_count,
+                        "logo_detected": has_logo,
+                        "footer_detected": has_footer,
+                        "smartart_detected": has_smartart,
+                        "relationships_preserved": True,
+                        "theme_preserved": True,
+                        "editable_placeholders": editable_phs,
+                    }
 
         return TemplateMetadata(
             file_path=str(path.resolve()),

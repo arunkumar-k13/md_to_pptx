@@ -1,11 +1,17 @@
 """Template Cache Module.
 
-Serializes and caches TemplateMetadata to disk (JSON) based on SHA256 hashes and file modification timestamps to prevent redundant XML template analysis.
+Serializes TemplateMetadata to disk (JSON), keyed on the template's file name and size and
+validated against its modification time, to avoid re-analysing the same template.
+
+Cache location: the TEMPLATE_CACHE_DIR environment variable if set, otherwise
+<system temp>/md_to_pptx/template_cache.
 """
 
 from __future__ import annotations
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Optional, Union
 
@@ -26,7 +32,8 @@ class TemplateCache:
         if cache_dir:
             self.cache_dir = Path(cache_dir)
         else:
-            self.cache_dir = Path.home() / ".gemini" / "antigravity" / "cache" / "templates"
+            env_dir = os.getenv("TEMPLATE_CACHE_DIR")
+            self.cache_dir = Path(env_dir) if env_dir else Path(tempfile.gettempdir()) / "md_to_pptx" / "template_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._analyzer = TemplateAnalyzer()
 

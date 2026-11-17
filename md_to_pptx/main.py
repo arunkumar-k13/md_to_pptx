@@ -6,12 +6,11 @@ MarkdownParser -> ContentAnalyzer -> SlidePlanner -> TemplateCache -> TemplateVa
 
 from __future__ import annotations
 import argparse
-import logging
 import sys
 from pathlib import Path
 from typing import Optional, Union
 
-from md_to_pptx.config.settings_loader import Settings, load_settings
+from md_to_pptx.config.settings_loader import load_settings
 from md_to_pptx.core.content_analyzer import ContentAnalyzer
 from md_to_pptx.core.design_engine import PresentationDesignEngine
 from md_to_pptx.core.exporters.environment import PdfEnvironmentDetector
@@ -19,7 +18,7 @@ from md_to_pptx.core.exporters.exporter_factory import ExporterFactory
 from md_to_pptx.core.generator.pptx_generator import PPTXGenerator
 from md_to_pptx.core.markdown_parser import MarkdownParser
 from md_to_pptx.core.overflow.paginator import Paginator
-from md_to_pptx.core.presentation_model import BulletListBlock, CodeBlock, ImageBlock, SlideIntent, TableBlock
+from md_to_pptx.core.presentation_model import CodeBlock, ImageBlock, TableBlock
 from md_to_pptx.core.slide_planner import SlidePlanner
 from md_to_pptx.core.template.layout_resolver import SlideLayoutResolver
 from md_to_pptx.core.template.template_cache import TemplateCache

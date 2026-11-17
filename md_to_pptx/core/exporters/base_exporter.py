@@ -23,7 +23,6 @@ class BaseExporter(ABC):
         Returns:
             Resolved Path instance to generated PDF file.
         """
-        pass
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -32,4 +31,3 @@ class BaseExporter(ABC):
         Returns:
             True if engine can be invoked, False otherwise.
         """
-        pass

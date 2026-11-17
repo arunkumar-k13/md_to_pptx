@@ -34,7 +34,6 @@ class InlineRun:
 class ASTNode:
     """Base abstract node for all Markdown Abstract Syntax Tree elements."""
 
-    pass
 
 
 @dataclass(slots=True)
@@ -186,7 +185,6 @@ class QuoteNode(ASTNode):
 class HorizontalRuleNode(ASTNode):
     """Represents a horizontal divider rule ('---', '***')."""
 
-    pass
 
 
 @dataclass(slots=True)

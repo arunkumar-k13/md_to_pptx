@@ -7,23 +7,26 @@ template master font formatting, line spacing, margins, and theme colors.
 
 from __future__ import annotations
 import logging
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml import parse_xml
 from pptx.util import Inches, Pt
 
-from md_to_pptx.core.ast_nodes import BulletListNode, InlineRun, ListItem
+from md_to_pptx.core.ast_nodes import BulletListNode, ListItem
 from md_to_pptx.core.presentation_model import (
     BulletListBlock,
     CodeBlock,
     ImageBlock,
     ParagraphBlock,
-    QuoteBlock,
     TableBlock,
     TitleBlock,
+    heading_level_of,
 )
+from md_to_pptx.core.typography import typography_for
 
 logger = logging.getLogger(__name__)
 
@@ -50,32 +53,79 @@ def apply_font_family(run_obj: Any, text_str: str, is_code: bool = False, defaul
         run_obj.font.size = Pt(int(default_size_pt))
 
 
-def render_title_block(shape: Any, title_block: TitleBlock) -> None:
+def render_title_block(shape: Any, title_block: TitleBlock, slide_height_inches: float = 7.5) -> None:
     """Render a TitleBlock into a title shape textframe with dynamic font scaling.
+
+    Calibrates font size according to placeholder dimensions and slide hierarchy so titles
+    never overflow their bounding box or collide with body content.
 
     Args:
         shape: PowerPoint title placeholder shape.
         title_block: Input TitleBlock IR instance.
+        slide_height_inches: Total presentation slide height for proportional font scaling.
     """
     if not hasattr(shape, "text_frame"):
         return
 
     tf = shape.text_frame
     tf.word_wrap = True
+    try:
+        tf.margin_left = Inches(0.0)
+        tf.margin_right = Inches(0.0)
+        tf.margin_top = Inches(0.0)
+        tf.margin_bottom = Inches(0.0)
+    except Exception:
+        pass
+
     if tf.paragraphs:
         p = tf.paragraphs[0]
         p.text = title_block.text
+        p.line_spacing = 1.0
+        p.space_after = Pt(0)
+        p.space_before = Pt(0)
 
-        # Auto-scale font size for long titles matching 'About Company' template slide title size (80pt base)
         t_len = len(title_block.text)
-        if t_len > 110:
-            target_size = Pt(28)
-        elif t_len > 75:
-            target_size = Pt(36)
-        elif t_len > 40:
-            target_size = Pt(48)
+        box_h = shape.height.inches if hasattr(shape, "height") and shape.height else 1.25
+
+        # Standard slide title placeholder (height < 1.8 inches, typical for 7.5" standard slides)
+        if box_h < 1.8:
+            if title_block.level == 1:
+                # Cover / Title slide
+                if t_len > 80:
+                    target_size = Pt(24)
+                elif t_len > 45:
+                    target_size = Pt(28)
+                else:
+                    target_size = Pt(34)
+            else:
+                # Content slide title: 20pt - 26pt ensures single or clean 2-line title within ~1 inch height
+                if t_len > 75:
+                    target_size = Pt(20)
+                elif t_len > 45:
+                    target_size = Pt(22)
+                elif t_len > 25:
+                    target_size = Pt(24)
+                else:
+                    target_size = Pt(26)
         else:
-            target_size = Pt(80)
+            # Oversized canvas (like MC template's 2.9" title box on 15" canvas)
+            scale = max(1.0, slide_height_inches / 7.5)
+            if title_block.level == 1:
+                if t_len > 80:
+                    target_size = Pt(int(32 * min(1.35, scale)))
+                elif t_len > 45:
+                    target_size = Pt(int(40 * min(1.35, scale)))
+                else:
+                    target_size = Pt(int(48 * min(1.35, scale)))
+            else:
+                if t_len > 110:
+                    target_size = Pt(24)
+                elif t_len > 75:
+                    target_size = Pt(30)
+                elif t_len > 40:
+                    target_size = Pt(36)
+                else:
+                    target_size = Pt(40)
 
         p.font.name = "Arial"
         p.font.size = target_size
@@ -92,48 +142,27 @@ def render_paragraph_block(text_frame: Any, para_block: ParagraphBlock, slide_he
         para_block: Input ParagraphBlock IR instance.
         slide_height_inches: Total presentation slide height for proportional font scaling.
     """
-    scale = max(1.0, slide_height_inches / 7.5)
-    base_font_pt = 18.0 * min(1.35, scale)
-
     p = text_frame.add_paragraph() if text_frame.paragraphs[0].text else text_frame.paragraphs[0]
+
+    typo = typography_for(slide_height_inches)
     p.level = 0
-    p.space_after = Pt(int(6 * scale))
-    p.space_before = Pt(int(2 * scale))
-    p.line_spacing = 1.15
+    p.line_spacing = typo.line_spacing
 
-    # Calculate distinct heading font sizes for H1 > H2 > H3 > H4 > H5 > H6 hierarchy
-    h_level = para_block.style_overrides.get("heading_level", 0)
-    t_str = para_block.text.strip()
-    t_lower = t_str.lower()
-
-    is_h1 = h_level == 1 or "heading level 1" in t_lower or t_str.startswith("H1:")
-    is_h2 = h_level == 2 or "heading level 2" in t_lower or t_str.startswith("H2:") or "level 2 heading" in t_lower
-    is_h3 = h_level == 3 or "heading level 3" in t_lower or t_str.startswith("H3:") or "level 3 heading" in t_lower
-    is_h4 = h_level == 4 or "heading level 4" in t_lower or t_str.startswith("H4:") or "level 4 heading" in t_lower
-    is_h5 = h_level == 5 or "heading level 5" in t_lower or t_str.startswith("H5:")
-    is_h6 = h_level == 6 or "heading level 6" in t_lower or t_str.startswith("H6:")
-
-    is_heading_block = (h_level > 0 or is_h1 or is_h2 or is_h3 or is_h4 or is_h5 or is_h6) or (
-        para_block.runs and all(getattr(r, "is_bold", False) for r in para_block.runs)
-    )
+    # Heading level comes from the Markdown AST (or 0 for an all-bold label paragraph);
+    # the same rule drives the overflow height estimate, so sizes always agree.
+    h_level = heading_level_of(para_block)
+    is_heading_block = h_level is not None
+    is_h5 = h_level == 5
+    is_h6 = h_level == 6
 
     if is_heading_block:
-        if is_h1:
-            base_font_pt = 32.0 * min(1.35, scale)
-        elif is_h2:
-            base_font_pt = 28.0 * min(1.35, scale)
-        elif is_h3:
-            base_font_pt = 24.0 * min(1.35, scale)
-        elif is_h4:
-            base_font_pt = 20.0 * min(1.35, scale)
-        elif is_h5:
-            base_font_pt = 18.0 * min(1.35, scale)
-        elif is_h6:
-            base_font_pt = 16.0 * min(1.35, scale)
-        else:
-            base_font_pt = 22.0 * min(1.35, scale)
-        p.space_before = Pt(int(10 * scale))
-        p.space_after = Pt(int(4 * scale))
+        base_font_pt = typo.heading_size(h_level)
+        p.space_before = Pt(typo.heading_before_pt)
+        p.space_after = Pt(typo.heading_after_pt)
+    else:
+        base_font_pt = typo.body_pt
+        p.space_before = Pt(typo.para_before_pt)
+        p.space_after = Pt(typo.para_after_pt)
 
     if not para_block.runs:
         p.text = para_block.text
@@ -176,16 +205,15 @@ def render_bullet_list_block(text_frame: Any, list_block: BulletListBlock, slide
         list_block: Input BulletListBlock IR instance.
         slide_height_inches: Total presentation slide height for proportional font scaling.
     """
-    scale = max(1.0, slide_height_inches / 7.5)
+    typo = typography_for(slide_height_inches)
+    sp_after = Pt(typo.list_after_pt)
+    sp_before = Pt(typo.list_before_pt)
 
     def _render_items(items: list[ListItem], depth: int = 0):
-        import re
-        # Count existing level=0 ordered paragraphs in text_frame to maintain sequence for split blocks
-        existing_lvl0 = sum(
-            1 for p_exist in text_frame.paragraphs 
-            if getattr(p_exist, "level", 0) == 0 and p_exist.text.strip() and re.match(r"^\d+[\.\)]", p_exist.text.strip())
-        )
-        level_counters: dict[int, int] = {0: getattr(list_block, "start_index", 1) - 1 + existing_lvl0}
+        # Numbering belongs to this list only. Continuation slides carry the
+        # correct offset in list_block.start_index (set by OverflowStrategy).
+        level_counters: dict[int, int] = {0: getattr(list_block, "start_index", 1) - 1}
+        level_kinds: dict[int, bool] = {}
 
         for item in items:
             p = text_frame.add_paragraph() if text_frame.paragraphs[0].text else text_frame.paragraphs[0]
@@ -197,6 +225,11 @@ def render_bullet_list_block(text_frame: Any, list_block: BulletListBlock, slide
                 if lvl > item_depth:
                     level_counters[lvl] = 0
 
+            item_kind = bool(getattr(item, "is_ordered", list_block.is_ordered))
+            # A switch between bulleted and numbered items at the same depth starts a new sequence
+            if item_depth > 0 and level_kinds.get(item_depth) not in (None, item_kind):
+                level_counters[item_depth] = 0
+            level_kinds[item_depth] = item_kind
             level_counters[item_depth] = level_counters.get(item_depth, 0) + 1
             item_idx = level_counters[item_depth]
 
@@ -211,7 +244,6 @@ def render_bullet_list_block(text_frame: Any, list_block: BulletListBlock, slide
                 if child_xml.tag.endswith(("buChar", "buAutoNum", "buNone", "buBlip")):
                     pPr.remove(child_xml)
 
-            from pptx.oxml import parse_xml
             if item_is_ordered:
                 try:
                     pPr.insert(0, parse_xml('<a:buNone xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'))
@@ -223,14 +255,13 @@ def render_bullet_list_block(text_frame: Any, list_block: BulletListBlock, slide
                 except Exception:
                     pass
 
-            p.space_after = Pt(int(4 * scale))
-            p.space_before = Pt(int(2 * scale))
-            p.line_spacing = 1.15
+            p.space_after = sp_after
+            p.space_before = sp_before
+            p.line_spacing = typo.line_spacing
 
-            base_pt = (20.0 if item_depth == 0 else 18.0 if item_depth == 1 else 16.0) * min(1.35, scale)
+            base_pt = typo.list_size(item_depth)
             target_font_size = Pt(int(base_pt))
 
-            import re
             item_text = item.text
             if item_is_ordered and not re.match(r"^\d+[\.\)]\s+", item_text):
                 item_text = f"{item_idx}. {item_text}"
@@ -451,13 +482,17 @@ def render_image_block(
             logger.error("Failed to render image %s: %s", image_block.src, err, exc_info=True)
 
     # Fallback Image Card Container for Remote / Placeholder URLs or missing files
-    card_h = min(4.5, max(2.2, 15.0 - top_in - 1.0))
+    # Proportional card sizing: max height 2.6 inches, max width 8.5 inches
+    card_h = min(2.6, max(1.8, height_in)) if height_in > 0 else 2.2
+    card_w = min(width_in if width_in > 0 else 8.0, 8.5)
+    offset_x = left_in + (width_in - card_w) / 2.0 if width_in > card_w else left_in
+
     from pptx.enum.shapes import MSO_SHAPE
     card = slide.shapes.add_shape(
         MSO_SHAPE.ROUNDED_RECTANGLE,
-        Inches(left_in),
+        Inches(offset_x),
         Inches(top_in),
-        Inches(width_in),
+        Inches(card_w),
         Inches(card_h),
     )
     card.fill.solid()
@@ -482,8 +517,6 @@ def render_image_block(
     p2.font.color.rgb = RGBColor(100, 100, 100)
     p2.space_before = Pt(8)
 
-
-from pptx.oxml import parse_xml
 
 def render_code_block(
     slide_or_tf: Any,

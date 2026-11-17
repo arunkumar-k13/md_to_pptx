@@ -7,7 +7,8 @@ fit within spatial bounds.
 
 from __future__ import annotations
 import logging
-from typing import List, Optional
+import re
+from typing import Any, List, Optional
 
 from md_to_pptx.config.settings_loader import Settings
 from md_to_pptx.core.overflow.overflow_analyzer import OverflowAnalyzer
@@ -96,6 +97,7 @@ class Paginator:
         results: List[Slide] = []
         current_slide = slide
         continuation_count = 0
+        max_continuations = 200  # hard stop: a slide can never paginate forever
 
         while True:
             analysis = self.analyzer.analyze_slide(
@@ -112,8 +114,13 @@ class Paginator:
 
             kept_blocks, moved_blocks = self.strategy.resolve_overflow(current_slide, analysis)
 
-            if not moved_blocks or kept_blocks == current_slide.blocks:
-                # Unable to split further
+            if (
+                not moved_blocks
+                or not kept_blocks
+                or kept_blocks == current_slide.blocks
+                or continuation_count >= max_continuations
+            ):
+                # Unable to make progress: keep the slide as it is rather than loop
                 results.append(current_slide)
                 break
 
@@ -140,7 +147,6 @@ class Paginator:
             new_section_title = None
             if isinstance(first_moved, ParagraphBlock):
                 txt = first_moved.text.strip()
-                import re
                 if re.match(r"^\s*(\*\*|\#\#\s*)?(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z]", txt):
                     new_section_title = txt
 

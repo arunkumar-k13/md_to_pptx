@@ -6,7 +6,10 @@ Provides structured data containers and markdown formatters for presentation gen
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from md_to_pptx.core.qa.visual_qa import QAReport
 
 
 @dataclass(slots=True)
@@ -125,7 +128,7 @@ class GenerationReport:
         if self.pdf_path and self.export_status == "SUCCESS":
             md.append(f"- **PDF Export**: `[Success]` (`{pdf_name}` via {self.export_engine_used})")
         elif self.export_status == "UNAVAILABLE":
-            md.append(f"- **PDF Export**: `Unavailable` (Reason: No supported PDF engine detected on host machine)")
+            md.append("- **PDF Export**: `Unavailable` (Reason: No supported PDF engine detected on host machine)")
         else:
             md.append(f"- **PDF Export**: `{self.export_status}` (Reason: {self.export_engine_used})")
 

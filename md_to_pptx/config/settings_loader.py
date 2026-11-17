@@ -27,7 +27,7 @@ class OverflowSettings:
         enable_automatic_continuation: Automatically split overflow onto continuation slides.
     """
 
-    max_bullets_per_slide: int = 10
+    max_bullets_per_slide: int = 12
     max_paragraph_words_per_slide: int = 200
     min_font_size_pt: int = 14
     font_scaling_enabled: bool = True
@@ -69,11 +69,11 @@ class ExportSettings:
     """PDF export preferences and environment paths.
 
     Attributes:
-        preferred_pdf_exporter: Target exporter plugin ('com' or 'libreoffice').
+        preferred_pdf_exporter: Target exporter plugin ('libreoffice').
         libreoffice_binary_path: Executable path for headless LibreOffice conversion.
     """
 
-    preferred_pdf_exporter: str = "com"
+    preferred_pdf_exporter: str = "libreoffice"
     libreoffice_binary_path: str = "soffice"
 
 

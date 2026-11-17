@@ -8,6 +8,7 @@ slide hints. Decouples raw syntax parsing from downstream presentation planning.
 from __future__ import annotations
 import enum
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Set
 
@@ -19,6 +20,7 @@ from md_to_pptx.core.ast_nodes import (
     HeaderNode,
     HorizontalRuleNode,
     ImageNode,
+    ListItem,
     ParagraphNode,
     QuoteNode,
     Section,
@@ -253,7 +255,6 @@ class ContentAnalyzer:
 
     def _is_major_section_header_text(self, text: str) -> bool:
         t = text.strip()
-        import re
         pattern = r"^\s*(\*\*|\#\#\s*)?(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z]"
         return bool(re.match(pattern, t))
 

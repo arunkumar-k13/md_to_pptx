@@ -15,6 +15,7 @@ from md_to_pptx.core.ast_nodes import (
     CodeBlockNode,
     HeaderNode,
     ImageNode,
+    InlineRun,
     ParagraphNode,
     QuoteNode,
     TableNode,
@@ -22,7 +23,6 @@ from md_to_pptx.core.ast_nodes import (
 from md_to_pptx.core.content_analyzer import (
     AnalyzedBlock,
     AnalyzedDocument,
-    ContentBlockType,
 )
 from md_to_pptx.core.design_engine import PresentationDesignEngine, PresentationDesignPlan, PresentationIntent
 from md_to_pptx.core.presentation_model import (
@@ -61,7 +61,6 @@ class SlidePlanner:
         Returns:
             Populated unpaginated Presentation model.
         """
-        cfg = settings or Settings()
         engine = PresentationDesignEngine()
         plan = design_plan or engine.create_design_plan(analyzed_doc)
 

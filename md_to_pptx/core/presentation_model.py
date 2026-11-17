@@ -12,6 +12,34 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from md_to_pptx.core.ast_nodes import InlineRun, ListItem
+from md_to_pptx.core.typography import (
+    DEFAULT_TEXT_INSET_LEFT_RIGHT_IN,
+    STANDARD,
+    Typography,
+    paragraph_height_in,
+    split_sentences,
+)
+
+
+def heading_level_of(block: Any) -> Optional[int]:
+    """Heading level of a paragraph block as the renderer styles it.
+
+    Returns the Markdown heading level (1-6), 0 for an all-bold label paragraph
+    (rendered at heading size), or None for ordinary body text.
+    """
+    overrides = getattr(block, "style_overrides", None) or {}
+    level = overrides.get("heading_level", 0)
+    if level and level > 0:
+        return int(level)
+    runs = getattr(block, "runs", None)
+    if runs and all(getattr(r, "is_bold", False) for r in runs if getattr(r, "text", "").strip()):
+        return 0
+    return None
+
+
+def _text_width(available_width_inches: float) -> float:
+    """Usable line width inside a text box after the default left/right insets."""
+    return max(1.0, available_width_inches - 2 * DEFAULT_TEXT_INSET_LEFT_RIGHT_IN)
 
 
 class SlideIntent(enum.Enum):
@@ -49,7 +77,7 @@ class ContentBlock:
     block_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     style_overrides: Dict[str, Any] = field(default_factory=dict)
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
         """Estimate visual rendering height in inches based on block metrics.
 
         Args:
@@ -73,7 +101,7 @@ class TitleBlock(ContentBlock):
     text: str = ""
     level: int = 1
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
         chars_per_line = max(1, int(available_width_inches * 12))  # ~12 chars/inch for titles
         lines = max(1, (len(self.text) + chars_per_line - 1) // chars_per_line)
         return float(lines * 0.45)
@@ -91,15 +119,50 @@ class ParagraphBlock(ContentBlock):
     text: str = ""
     runs: List[InlineRun] = field(default_factory=list)
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
-        font_size_pt = 16.0
-        line_spacing = 1.15
-        char_width_in = (font_size_pt * 0.52) / 72.0
-        line_height_in = (font_size_pt * line_spacing) / 72.0
-        eff_width = max(2.0, available_width_inches - 0.2)
-        chars_per_line = max(15, int(eff_width / char_width_in))
-        lines = max(1, (len(self.text) + chars_per_line - 1) // chars_per_line) if self.text else 1
-        return float(lines * line_height_in + 0.12)
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
+        typo = typography or STANDARD
+        level = heading_level_of(self)
+        if level is None:
+            size, before, after, bold = typo.body_pt, typo.para_before_pt, typo.para_after_pt, False
+        else:
+            size, before, after, bold = typo.heading_size(level), typo.heading_before_pt, typo.heading_after_pt, True
+        # Body paragraphs sit at the master's first bullet level, so they share its left margin
+        width = max(1.0, _text_width(available_width_inches) - typo.list_indent(0))
+        return float(paragraph_height_in(
+            self.text, width, size, typo.line_spacing, before, after, bold=bold, runs=self.runs,
+        ))
+
+    def split_to_fit(
+        self, available_width_inches: float, max_height_inches: float, typography: Optional[Typography] = None
+    ) -> Optional[tuple]:
+        """Split into (fits, rest) at the last sentence (or word) boundary that fits.
+
+        Returns None when not even one sentence/word fits or no split is possible.
+        """
+        typo = typography or STANDARD
+        units = split_sentences(self.text)
+        joiner = " "
+        if len(units) < 2:
+            units = self.text.split(" ")
+        if len(units) < 2:
+            return None
+        best = 0
+        for k in range(1, len(units)):
+            head = ParagraphBlock(text=joiner.join(units[:k]), style_overrides=dict(self.style_overrides))
+            if head.estimate_height(available_width_inches, typo) <= max_height_inches:
+                best = k
+            else:
+                break
+        if best == 0:
+            return None
+        head_text = joiner.join(units[:best])
+        tail_text = joiner.join(units[best:])
+        # Formatting runs cannot be cut reliably mid-run; continuation pieces keep plain text styling
+        plain = [InlineRun(text=head_text)], [InlineRun(text=tail_text)]
+        return (
+            ParagraphBlock(text=head_text, runs=plain[0], style_overrides=dict(self.style_overrides)),
+            ParagraphBlock(text=tail_text, runs=plain[1], style_overrides=dict(self.style_overrides)),
+        )
 
 
 @dataclass(slots=True)
@@ -115,34 +178,42 @@ class BulletListBlock(ContentBlock):
     is_ordered: bool = False
     start_index: int = 1
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
-        font_size_pt = 20.0
-        line_spacing = 1.20
-        char_width_in = (font_size_pt * 0.56) / 72.0
-        line_height_in = (font_size_pt * line_spacing) / 72.0
-        para_space_in = (4.0 + 10.0) / 72.0
+    def item_heights(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> List[float]:
+        """Rendered height of each list item (items are flattened, nesting is in `level`)."""
+        typo = typography or STANDARD
+        width = _text_width(available_width_inches)
+        heights: List[float] = []
+        counters: Dict[int, int] = {}
+        for item in self.items:
+            depth = max(0, min(4, getattr(item, "level", 0)))
+            ordered = bool(getattr(item, "is_ordered", self.is_ordered))
+            counters[depth] = counters.get(depth, 0) + 1
+            for lvl in [k for k in counters if k > depth]:
+                counters[lvl] = 0
+            text = (item.text or "").strip()
+            size = typo.list_size(depth)
+            if ordered:
+                text = f"{counters[depth]}. {text}"
+            line_w = max(1.0, width - typo.list_indent(depth))
+            runs = list(getattr(item, "runs", None) or [])
+            if ordered and runs:
+                runs = [InlineRun(text=f"{counters[depth]}. ")] + runs
+            h = paragraph_height_in(
+                text, line_w, size, typo.line_spacing, typo.list_before_pt, typo.list_after_pt, runs=runs or None
+            )
+            for child in getattr(item, "children", None) or []:
+                if isinstance(child, ListItem):
+                    h += BulletListBlock(items=[child], is_ordered=ordered).estimate_height(available_width_inches, typo)
+            heights.append(h)
+        return heights
 
-        def _calc_item_height(item: ListItem) -> float:
-            level = max(0, getattr(item, "level", 0))
-            level_indent = 0.35 * (level + 1)
-            eff_width = max(2.0, available_width_inches - 0.2 - level_indent)
-            chars_per_line = max(10, int(eff_width / char_width_in))
+    def split_indices(self) -> List[int]:
+        """Indices where the list may be split: before a top-level item, never inside a nested group."""
+        min_level = min((getattr(i, "level", 0) for i in self.items), default=0)
+        return [k for k in range(1, len(self.items)) if getattr(self.items[k], "level", 0) == min_level]
 
-            text_str = item.text.strip() if item.text else ""
-            lines = max(1, (len(text_str) + chars_per_line - 1) // chars_per_line) if text_str else 1
-            h = (lines * line_height_in) + para_space_in
-
-            if hasattr(item, "children") and item.children:
-                for c in item.children:
-                    if isinstance(c, ListItem):
-                        h += _calc_item_height(c)
-                    elif hasattr(c, "items"):
-                        for sub_i in getattr(c, "items", []):
-                            if isinstance(sub_i, ListItem):
-                                h += _calc_item_height(sub_i)
-            return h
-
-        return sum(_calc_item_height(item) for item in self.items) + 0.20
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
+        return float(sum(self.item_heights(available_width_inches, typography)))
 
 
 @dataclass(slots=True)
@@ -161,7 +232,7 @@ class ImageBlock(ContentBlock):
     title: str = ""
     aspect_ratio: float = 1.33
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
         return float(min(4.5, available_width_inches / self.aspect_ratio))
 
 
@@ -178,7 +249,7 @@ class TableBlock(ContentBlock):
     rows: List[List[str]] = field(default_factory=list)
     raw_rows: List[Any] = field(default_factory=list)
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
         all_rows = []
         if self.headers:
             all_rows.append(self.headers)
@@ -214,7 +285,7 @@ class CodeBlock(ContentBlock):
     code: str = ""
     language: str = ""
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
         line_count = max(1, len(self.code.splitlines()))
         return float(min(4.5, line_count * 0.25 + 0.2))
 
@@ -232,10 +303,13 @@ class QuoteBlock(ContentBlock):
     author: str = ""
     runs: List[InlineRun] = field(default_factory=list)
 
-    def estimate_height(self, available_width_inches: float = 8.0) -> float:
-        chars_per_line = max(1, int(available_width_inches * 15))
-        lines = max(1, (len(self.text) + chars_per_line - 1) // chars_per_line)
-        return float(lines * 0.32 + 0.2)
+    def estimate_height(self, available_width_inches: float = 8.0, typography: Optional[Typography] = None) -> float:
+        typo = typography or STANDARD
+        quoted = f'"{self.text}"'
+        width = max(1.0, _text_width(available_width_inches) - typo.list_indent(0))
+        return float(paragraph_height_in(
+            quoted, width, typo.quote_pt, 1.0, typo.quote_before_pt, typo.quote_after_pt,
+        ))
 
 
 @dataclass(slots=True)

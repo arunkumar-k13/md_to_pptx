@@ -7,14 +7,10 @@ PowerPoint shape manipulation.
 
 from __future__ import annotations
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
 from md_to_pptx.core.presentation_model import (
-    CodeBlock,
-    ContentBlock,
     ImageBlock,
-    ParagraphBlock,
-    QuoteBlock,
     Slide,
     SlideIntent,
     TableBlock,

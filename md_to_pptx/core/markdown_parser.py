@@ -7,6 +7,7 @@ lists, tables, images, code blocks, quotes, and horizontal rules.
 
 from __future__ import annotations
 import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -33,8 +34,6 @@ from md_to_pptx.core.ast_nodes import (
 
 logger = logging.getLogger(__name__)
 
-
-import re
 
 def shield_math_blocks(raw_text: str) -> tuple[str, list]:
     """Shield LaTeX math expressions before structure restoration."""
@@ -113,6 +112,12 @@ def restore_markdown_structure(raw_text: str) -> str:
     if "\\n" in text and "\n" not in text:
         text = text.replace("\\n", "\n").replace("\\t", "\t")
 
+    # Well-formed Markdown already has its line structure. Only flattened input
+    # (all content on one or two lines) needs line breaks rebuilt; applying the
+    # heuristics to normal documents corrupts inline '+', '*', '-' and list indentation.
+    if text.strip().count("\n") >= 2:
+        return text
+
     # Shield math blocks and code/tables before applying newline/bullet/heading restoration
     shielded_text, math_placeholders = shield_math_blocks(text)
     shielded_text, code_placeholders = shield_code_and_tables(shielded_text)
@@ -172,6 +177,21 @@ def parse_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
     return "".join(content), i
 
 
+def _drop_unmatched_close_parens(text: str) -> str:
+    """Remove only ')' characters that have no matching '(' (malformed-input artifacts)."""
+    depth = 0
+    out = []
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                continue
+            depth -= 1
+        out.append(ch)
+    return "".join(out)
+
+
 def clean_latex_and_inline_math(text: str) -> str:
     """Convert LaTeX math notation and inline math delimiters into clean Unicode text."""
     has_leading_space = text.startswith(" ")
@@ -182,12 +202,14 @@ def clean_latex_and_inline_math(text: str) -> str:
     # Strip object-replacement characters, control chars, and malformed bracket/URL artifacts
     result = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffc]", "", result)
     result = re.sub(r"\]\([^\)]*\)", "", result)
-    result = re.sub(r"\)+[a-zA-Z0-9_]*\)", "", result)
+    result = _drop_unmatched_close_parens(result)
 
     # 1. Remove display math $$ delimiters and dollar wrappers
     result = re.sub(r"\$\$\s*", "", result)
     result = re.sub(r"\s*\$\$", "", result)
-    result = re.sub(r"\$([^\$]+)\$", r"\1", result)
+    # Inline math $...$: TeX rules - opening $ followed by non-space, closing $ preceded by
+    # non-space and not followed by a digit, same line only (so "$100 ... $5" stays literal)
+    result = re.sub(r"\$(?=\S)([^\$\n]+?)(?<=\S)\$(?!\d)", r"\1", result)
 
     # 2. Convert LaTeX matrices \begin{pmatrix} a & b \\ c & d \end{pmatrix} -> [a  b | c  d]
     def _clean_matrix(m):
@@ -585,6 +607,9 @@ class MarkdownParser:
                 aggregated_runs = []
                 for n in child_nodes:
                     if hasattr(n, "runs") and n.runs:
+                        if aggregated_runs:
+                            # Soft line breaks inside a quote read as a space
+                            aggregated_runs.append(InlineRun(text=" "))
                         aggregated_runs.extend(n.runs)
                 return QuoteNode(children=child_nodes, text=aggregated_text, runs=aggregated_runs)
 
@@ -614,6 +639,7 @@ class MarkdownParser:
         """
         runs: List[InlineRun] = []
         full_text_parts: List[str] = []
+        part_is_code: List[bool] = []
 
         def _traverse(
             n: SyntaxTreeNode,
@@ -636,6 +662,7 @@ class MarkdownParser:
                     )
                     clean_run_text = (" " + text) if needs_leading_space else text
                     full_text_parts.append(clean_run_text)
+                    part_is_code.append(is_code or ntype == "code_inline")
                     runs.append(
                         InlineRun(
                             text=clean_run_text,
@@ -661,9 +688,11 @@ class MarkdownParser:
                 alt = getattr(n, "content", "")
                 src = attrs.get("src", "")
                 full_text_parts.append(alt)
+                part_is_code.append(False)
                 runs.append(InlineRun(text=f"[Image: {alt or src}]", url=src))
             elif ntype in ("softbreak", "hardbreak"):
                 full_text_parts.append("\n")
+                part_is_code.append(False)
                 runs.append(InlineRun(text="\n"))
             elif ntype == "strong":
                 for child in getattr(n, "children", []):
@@ -721,11 +750,22 @@ class MarkdownParser:
         for child in node.children:
             _traverse(child, is_bold=False, is_italic=False, is_code=False, is_strikethrough=False, url=None)
 
-        full_text = "".join(full_text_parts).strip()
+        # Inline code is literal: shield it from LaTeX/sanitizer cleaning
+        code_literals: List[str] = []
+        shielded_parts: List[str] = []
+        for part, is_code_part in zip(full_text_parts, part_is_code):
+            if is_code_part:
+                shielded_parts.append(f"\u2063CODE{len(code_literals)}\u2063")
+                code_literals.append(part)
+            else:
+                shielded_parts.append(part)
+        full_text = "".join(shielded_parts).strip()
         cleaned_text = clean_latex_and_inline_math(full_text)
+        for idx, lit in enumerate(code_literals):
+            cleaned_text = cleaned_text.replace(f"\u2063CODE{idx}\u2063", lit)
         cleaned_runs = [
             InlineRun(
-                text=clean_latex_and_inline_math(r.text),
+                text=r.text if r.is_code else clean_latex_and_inline_math(r.text),
                 is_bold=r.is_bold,
                 is_italic=r.is_italic,
                 is_code=r.is_code,
@@ -876,13 +916,11 @@ class MarkdownParser:
 
     def _is_roman_header(self, text: str) -> bool:
         t = text.strip()
-        import re
         pattern = r"^\s*(\*\*|\#\#\s*)?(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z]"
         return bool(re.match(pattern, t))
 
     def _is_top_level_section_header(self, node: ASTNode, is_first_section: bool = False, has_numbered_sections: bool = False) -> bool:
         """Check if node is a top-level section boundary (e.g. main title, numbered/Roman header, or H1/H2 header)."""
-        import re
         if isinstance(node, HeaderNode):
             text = node.text.strip()
             # 1. Numbered or Roman Section Headers ALWAYS start a new major section
@@ -923,7 +961,6 @@ class MarkdownParser:
         Returns:
             List of Section instances.
         """
-        import re
         has_numbered = any(
             isinstance(n, HeaderNode) and re.match(r"^\s*(\#\#?\s*)?\d{1,3}\.\s+[A-Z]", n.text.strip())
             for n in nodes

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from pptx import Presentation as PPTXPresentation
 from pptx.dml.color import RGBColor
@@ -24,9 +24,11 @@ from md_to_pptx.core.generator.shape_renderers import (
     render_table_block,
     render_title_block,
 )
+from md_to_pptx.core.ast_nodes import InlineRun
 from md_to_pptx.core.presentation_model import (
     BulletListBlock,
     CodeBlock,
+    ContentBlock,
     ImageBlock,
     ParagraphBlock,
     Presentation,
@@ -36,6 +38,7 @@ from md_to_pptx.core.presentation_model import (
     TableBlock,
     TitleBlock,
 )
+from md_to_pptx.core.typography import typography_for
 from md_to_pptx.core.template.layout_resolver import SlideLayoutResolver
 from md_to_pptx.core.template.template_analyzer import TemplateMetadata
 
@@ -95,6 +98,27 @@ def extract_title_metadata(blocks: list[ContentBlock], default_title: str = "", 
 
     final_subtitle = " | ".join(subtitle_parts) if subtitle_parts else default_subtitle
     return final_title, final_subtitle, clean_blocks
+
+
+def _set_full_geometry(shape: Any, left: Any, top: Any, width: Any, height: Any) -> None:
+    """Write a complete position and size onto a shape.
+
+    A placeholder that inherits its geometry from the layout has no <a:xfrm> of its own.
+    Setting only width or height on it creates an <a:xfrm> with no offset and a zero
+    dimension, which PowerPoint draws at the slide's top-left with zero height. Writing
+    all four values keeps the inherited position and size intact.
+    """
+    shape.left, shape.top, shape.width, shape.height = left, top, width, height
+
+
+def _remove_empty_placeholders(slide_shape: Any, types: list[str]) -> None:
+    """Delete unfilled placeholders of the given types so no 'Click to add ...' box remains."""
+    for shp in list(slide_shape.shapes):
+        if not getattr(shp, "is_placeholder", False):
+            continue
+        ph_type = str(shp.placeholder_format.type).split(".")[-1].split(" ")[0].upper()
+        if ph_type in types and shp.has_text_frame and not shp.text_frame.text.strip():
+            shp._element.getparent().remove(shp._element)
 
 
 def get_all_slide_shapes(shapes: Any) -> list[Any]:
@@ -241,13 +265,40 @@ class PPTXGenerator:
                 prs.slides._sldIdLst.clear()
                 prs.slides._sldIdLst.extend(target_slide_elements)
 
-        # Enforce Corporate Footer & Universal Font Sanitization (Arial) across all slides
+        # Enforce Corporate Footer, Watermark Sanitization & Universal Font Sanitization (Arial)
+        PROMO_WATERMARKS = (
+            "fppt.com",
+            "free-power-point",
+            "free powerpoint template",
+            "free template provided by",
+            "www.free-power-point-templates.com",
+            "presentation template by",
+            "downloaded from",
+        )
+
+        for master in prs.slide_masters:
+            for shp in get_all_slide_shapes(master.shapes):
+                if shp.has_text_frame and shp.text_frame:
+                    if any(w in shp.text_frame.text.lower() for w in PROMO_WATERMARKS):
+                        shp.text_frame.text = ""
+            for layout in master.slide_layouts:
+                for shp in get_all_slide_shapes(layout.shapes):
+                    if shp.has_text_frame and shp.text_frame:
+                        if any(w in shp.text_frame.text.lower() for w in PROMO_WATERMARKS):
+                            shp.text_frame.text = ""
+
         for s in prs.slides:
             all_shps = get_all_slide_shapes(s.shapes)
             for shp in all_shps:
                 if shp.has_text_frame and shp.text_frame:
-                    if shp.text_frame.text and "Standard Business Presentation" in shp.text_frame.text:
-                        shp.text_frame.text = CORPORATE_FOOTER_TEXT
+                    t_lower = shp.text_frame.text.lower()
+                    if any(w in t_lower for w in PROMO_WATERMARKS):
+                        shp.text_frame.text = ""
+                    elif "Standard Business Presentation" in shp.text_frame.text:
+                        if getattr(self.tmpl_meta, "brand_slides", None):
+                            shp.text_frame.text = CORPORATE_FOOTER_TEXT
+                        else:
+                            shp.text_frame.text = ""
                     for p in shp.text_frame.paragraphs:
                         p.font.name = "Arial"
                         for r in p.runs:
@@ -300,6 +351,8 @@ class PPTXGenerator:
                             shp.text_frame.text = s_text
                             self.placeholders_populated_count += 1
                             break
+            else:
+                _remove_empty_placeholders(slide_shape, ["SUBTITLE"])
 
         elif role == "BRAND_CASE_STUDY":
             if slide_ir.title:
@@ -403,6 +456,25 @@ class PPTXGenerator:
 
     def _render_dynamic_slide(self, slide_shape: Any, slide_ir: Slide, presentation: Presentation) -> None:
         """Render a dynamic slide populating content blocks and clearing unpopulated body placeholders."""
+        slide_w = self.tmpl_meta.slide_width_inches if getattr(self, "tmpl_meta", None) and hasattr(self.tmpl_meta, "slide_width_inches") else 10.0
+        slide_h = self.tmpl_meta.slide_height_inches if getattr(self, "tmpl_meta", None) and hasattr(self.tmpl_meta, "slide_height_inches") else 7.5
+
+        # Auto-clamp any out-of-bounds template placeholders to ensure clean slide borders
+        for shp in slide_shape.shapes:
+            if any(getattr(shp, attr, None) is None for attr in ("left", "top", "width", "height")):
+                continue
+            new_w, new_h = shp.width, shp.height
+            if shp.left.inches + shp.width.inches > slide_w - 0.2:
+                new_w = Inches(max(2.0, slide_w - shp.left.inches - 0.35))
+            name_l = shp.name.lower()
+            if (
+                shp.top.inches + shp.height.inches > slide_h - 0.25
+                and "footer" not in name_l and "slide number" not in name_l and "date" not in name_l
+            ):
+                new_h = Inches(max(1.0, slide_h - shp.top.inches - 0.35))
+            if new_w != shp.width or new_h != shp.height:
+                _set_full_geometry(shp, shp.left, shp.top, new_w, new_h)
+
         # Handle Dynamic Title Slide
         if slide_ir.intent == SlideIntent.TITLE_SLIDE:
             t_def = slide_ir.title.text if slide_ir.title else (presentation.title or "Presentation Title")
@@ -411,27 +483,29 @@ class PPTXGenerator:
 
             title_ph = self._find_placeholder_by_type(slide_shape, ["TITLE", "CENTER_TITLE"])
             if title_ph:
-                render_title_block(title_ph, TitleBlock(text=t_text, level=1))
+                render_title_block(title_ph, TitleBlock(text=t_text, level=1), slide_height_inches=slide_h)
                 self.placeholders_populated_count += 1
 
             if s_text:
                 subtitle_ph = self._find_placeholder_by_type(slide_shape, ["SUBTITLE"])
                 if subtitle_ph:
-                    render_title_block(subtitle_ph, TitleBlock(text=s_text, level=2))
+                    render_title_block(subtitle_ph, TitleBlock(text=s_text, level=2), slide_height_inches=slide_h)
                     self.placeholders_populated_count += 1
+            else:
+                _remove_empty_placeholders(slide_shape, ["SUBTITLE"])
             slide_blocks = clean_blocks
         else:
             if slide_ir.title:
                 title_ph = self._find_placeholder_by_type(slide_shape, ["TITLE", "CENTER_TITLE"])
                 if title_ph:
-                    render_title_block(title_ph, slide_ir.title)
+                    render_title_block(title_ph, slide_ir.title, slide_height_inches=slide_h)
                     self.placeholders_populated_count += 1
 
             sub_text = slide_ir.subtitle
             if sub_text:
                 subtitle_ph = self._find_placeholder_by_type(slide_shape, ["SUBTITLE"])
                 if subtitle_ph:
-                    render_title_block(subtitle_ph, TitleBlock(text=sub_text, level=2))
+                    render_title_block(subtitle_ph, TitleBlock(text=sub_text, level=2), slide_height_inches=slide_h)
                     self.placeholders_populated_count += 1
             text_blocks = [b for b in slide_ir.blocks if isinstance(b, (ParagraphBlock, BulletListBlock, QuoteBlock))]
             visual_blocks = [b for b in slide_ir.blocks if not isinstance(b, (ParagraphBlock, BulletListBlock, QuoteBlock))]
@@ -475,7 +549,7 @@ class PPTXGenerator:
                 for prev_idx in range(i):
                     prev_b = slide_blocks[prev_idx]
                     ph_w = target_ph.width.inches if hasattr(target_ph, "width") else 11.34
-                    prev_h_total += prev_b.estimate_height(ph_w) + 0.35
+                    prev_h_total += prev_b.estimate_height(ph_w, typography_for(slide_h)) + 0.35
                 if prev_h_total > 0:
                     calc_top = min(10.2, base_top + prev_h_total)
 
@@ -485,26 +559,33 @@ class PPTXGenerator:
             elif isinstance(block, BulletListBlock) and tf:
                 render_bullet_list_block(tf, block, slide_height_inches=slide_h)
                 self.placeholders_populated_count += 1
-            elif isinstance(block, TableBlock):
-                left = target_ph.left.inches if target_ph else 1.83
-                width = target_ph.width.inches if target_ph else 11.34
-                height = target_ph.height.inches if target_ph else 4.0
+            slide_w = self.tmpl_meta.slide_width_inches if getattr(self, "tmpl_meta", None) and hasattr(self.tmpl_meta, "slide_width_inches") else 10.0
+            slide_h = self.tmpl_meta.slide_height_inches if getattr(self, "tmpl_meta", None) and hasattr(self.tmpl_meta, "slide_height_inches") else 7.5
+            def_left = slide_w * 0.08
+            def_width = slide_w * 0.84
+            def_height = min(3.8, max(2.2, slide_h - calc_top - 0.8))
+
+            if isinstance(block, TableBlock):
+                left = target_ph.left.inches if target_ph else def_left
+                width = target_ph.width.inches if target_ph else def_width
+                height = target_ph.height.inches if target_ph else min(4.0, def_height)
                 render_table_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
             elif isinstance(block, ImageBlock):
-                left = target_ph.left.inches if target_ph else 1.83
-                width = target_ph.width.inches if target_ph else 11.34
-                height = target_ph.height.inches if target_ph else 4.5
+                left = target_ph.left.inches if target_ph else def_left
+                width = target_ph.width.inches if target_ph else def_width
+                height = target_ph.height.inches if target_ph else min(2.8, def_height)
                 render_image_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
             elif isinstance(block, CodeBlock):
-                left = target_ph.left.inches if target_ph else 1.83
-                width = target_ph.width.inches if target_ph else 11.34
-                height = target_ph.height.inches if target_ph else 4.5
+                left = target_ph.left.inches if target_ph else def_left
+                width = target_ph.width.inches if target_ph else def_width
+                height = target_ph.height.inches if target_ph else min(3.8, def_height)
                 render_code_block(slide_shape, block, left, calc_top, width, height)
                 self.placeholders_populated_count += 1
             elif isinstance(block, QuoteBlock) and tf:
-                qp = tf.add_paragraph() if (tf.paragraphs and not tf.paragraphs[0].text) else tf.add_paragraph()
+                # Reuse the text frame's empty first paragraph so the quote does not start with a blank line
+                qp = tf.paragraphs[0] if (len(tf.paragraphs) == 1 and not tf.paragraphs[0].text) else tf.add_paragraph()
                 qp.level = 0
                 qp.space_before = Pt(6)
                 qp.space_after = Pt(6)
@@ -562,6 +643,10 @@ class PPTXGenerator:
 
     def _apply_corporate_branding_to_slide(self, slide_shape: Any, slide_ir: Slide) -> None:
         """Apply corporate visual branding (vertical blue accent bar and corporate footer) to dynamic slides."""
+        # Only inject corporate branding if template actually has MC brand slides configured
+        if not getattr(self, "tmpl_meta", None) or not getattr(self.tmpl_meta, "brand_slides", None):
+            return
+
         all_shps = get_all_slide_shapes(slide_shape.shapes)
 
         # 1. Vertical Blue Accent Bar (Rectangle 12)

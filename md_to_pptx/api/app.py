@@ -1,7 +1,6 @@
 """FastAPI Application Entrypoint for Markdown-to-PowerPoint REST API."""
 
 from __future__ import annotations
-import logging
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request, status
