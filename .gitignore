@@ -21,6 +21,7 @@ htmlcov/
 # Generated output & scratch directories
 output/*
 !output/.gitkeep
+output_test/
 vscode_outputs/
 scratch/
 *.zip
@@ -37,12 +38,9 @@ scratch/
 .DS_Store
 Thumbs.db
 
-# Local-only files (not part of md_to_pptx)
-CLAUDE.md
+# Presentations (Keep corporate_template.pptx)
+*.pptx
+!corporate_template.pptx
+
+# Local exports
 EXPORT_FOR_CLAUDE/
-output_test/
-samples/gemini_visual_chat_demo.html
-160470-business-template-16x9.pptx
-162478-collaboration-template-16x9.pptx
-test_zt_16x9.pptx
-generic_template.pptx
