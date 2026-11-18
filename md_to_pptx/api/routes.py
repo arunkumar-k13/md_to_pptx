@@ -60,7 +60,8 @@ def sanitize_topic_filename(topic: str, fallback_stem: str, file_ext: str) -> st
 
     generic_names = {"generated", "output", "presentation", "untitled", "sample", "temp", "file"}
     if not clean_name or clean_name.lower() in generic_names:
-        clean_name = f"Presentation_{re.sub(r'[^\w\-]', '_', fallback_stem)}" if fallback_stem else "Executive_Presentation"
+        safe_stem = re.sub(r"[^\w\-]", "_", fallback_stem) if fallback_stem else ""
+        clean_name = f"Presentation_{safe_stem}" if safe_stem else "Executive_Presentation"
 
     # Truncate topic filename to a safe max length of 60 characters
     clean_name = clean_name[:60].rstrip("_")
